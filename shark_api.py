@@ -67,13 +67,17 @@ def _parse_klines(raw) -> List[Candle]:
 def get_klines(symbol: str, interval: str, limit: int = 20) -> List[Candle]:
     """Fetch recent candles for a symbol. Raises RuntimeError with the
     exchange's own error message body on failure (not just 'Bad Request'),
-    so the Telegram alert / Actions log tells us exactly what's wrong."""
+    so the Telegram alert / Actions log tells us exactly what's wrong.
+
+    NOTE: confirmed via a live 400 response that Shark's field name is
+    `pair` (not `symbol`), and `priceType` is rejected by this endpoint's
+    validation -- so it is NOT sent.
+    """
     url = f"{config.BASE_URL}{config.KLINES_ENDPOINT}"
     payload = {
-        "symbol": symbol,
+        "pair": symbol,
         "interval": interval,
         "limit": limit,
-        "priceType": "LAST_PRICE",
     }
     resp = requests.post(url, json=payload, timeout=15)
     if not resp.ok:
