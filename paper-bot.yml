@@ -39,3 +39,4 @@ jobs:
           git add state.json trade_log.csv
           git diff --cached --quiet || git commit -m "Bot state update [skip ci]"
           git push
+# trigger refresh
