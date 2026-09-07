@@ -98,7 +98,14 @@ class SymbolEngine:
         blocks = shark_api.get_klines_with_retry(
             self.symbol, config.CPR_BLOCK_INTERVAL, limit=3
         )
+        print(f"[{self.symbol}] interval={config.CPR_BLOCK_INTERVAL} -> "
+              f"{len(blocks)} candle(s) received")
+        if blocks:
+            b = blocks[-1]
+            print(f"  latest candle: open_time={b.open_time} O={b.open} "
+                  f"H={b.high} L={b.low} C={b.close}")
         if len(blocks) < 2:
+            print(f"[{self.symbol}] not enough candles yet (need >=2), skipping this poll")
             return  # not enough data yet
 
         # Last item = currently forming block. The one before it = the most
