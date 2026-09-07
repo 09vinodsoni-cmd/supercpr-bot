@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# NOTE: state.json and trade_log.csv are intentionally NOT listed here.
+# The GitHub Actions workflow commits them back after every run so the
+# bot remembers its open positions and block history between runs.
