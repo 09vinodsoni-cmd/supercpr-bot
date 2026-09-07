@@ -55,7 +55,8 @@ class PaperBroker:
         risk_distance = abs(entry_price - initial_sl)
         if risk_distance <= 0:
             raise ValueError("SL distance must be > 0")
-        size = round(config.MAX_RISK_POINTS / risk_distance, 6)  # rule #7
+        max_risk = config.MAX_RISK_POINTS_BY_SYMBOL[symbol]
+        size = round(max_risk / risk_distance, 6)  # rule #7
 
         pos = Position(
             id=str(uuid.uuid4())[:8],
@@ -68,28 +69,38 @@ class PaperBroker:
         telegram_alert.send(
             f"🟢 <b>NEW {entry_type} {side}</b> {symbol}\n"
             f"Entry: {entry_price:.2f} | Initial SL: {initial_sl:.2f}\n"
-            f"Size: {size} | Risk: {config.MAX_RISK_POINTS} pts | id={pos.id}"
+            f"Size: {size} | Risk: {max_risk} pts | id={pos.id}"
         )
         return pos
 
     # ------------------------------------------------------------------
     # Per-tick management (rule #9 trailing, #11 independence)
     # ------------------------------------------------------------------
-    def update_all(self, prices: dict):
-        """prices: {symbol: last_price}. Call every poll."""
+    def update_all(self, price_ranges: dict):
+        """price_ranges: {symbol: (highest_high, lowest_low, last_close)}
+        covering everything since the last poll. Using a range (not a
+        single snapshot) means a wick that touched a level between two
+        polls is still caught, since the exchange's own candle recorded
+        that high/low even if we weren't watching at that exact second."""
         for pos in self.positions:
             if pos.status != "OPEN":
                 continue
-            price = prices.get(pos.symbol)
-            if price is None:
+            rng = price_ranges.get(pos.symbol)
+            if rng is None or rng[0] is None:
                 continue
-            self._update_position(pos, price)
+            high, low, last_close = rng
+            self._update_position(pos, high, low)
 
-    def _update_position(self, pos: Position, price: float):
-        r = pos.current_r(price)
+    def _update_position(self, pos: Position, high: float, low: float):
+        # The extreme that moves the trade favorably (for R-level tracking)
+        # vs. the extreme that would have hit its stop.
+        favorable_extreme = high if pos.sign == 1 else low
+        adverse_extreme = low if pos.sign == 1 else high
+
+        r_fav = pos.current_r(favorable_extreme)
 
         # --- 1R: partial exit + move to breakeven, start trailing ---
-        if not pos.partial_exit_done and r >= 1:
+        if not pos.partial_exit_done and r_fav >= 1:
             pos.partial_exit_done = True
             pos.remaining_fraction = 0.5
             pos.current_sl = pos.entry_price  # breakeven
@@ -98,12 +109,13 @@ class PaperBroker:
             pos.realized_pnl_points += realized
             telegram_alert.send(
                 f"🟡 <b>1R HIT</b> {pos.symbol} {pos.side} id={pos.id}\n"
-                f"Closed 50% @ ~{price:.2f} | SL moved to Break Even ({pos.entry_price:.2f})"
+                f"Closed 50% (high/low touched {favorable_extreme:.2f}) | "
+                f"SL moved to Break Even ({pos.entry_price:.2f})"
             )
 
         # --- 2R, 3R, 4R...: trail SL to previous R level ---
         elif pos.partial_exit_done:
-            r_level = math.floor(r)
+            r_level = math.floor(r_fav)
             if r_level >= 2 and r_level > pos.max_r_locked:
                 new_sl = pos.price_at_r(r_level - 1)
                 pos.current_sl = new_sl
@@ -113,11 +125,13 @@ class PaperBroker:
                     f"Trailing SL moved to {r_level - 1}R level = {new_sl:.2f}"
                 )
 
-        # --- check SL hit (closes remaining position) ---
-        hit = (pos.sign == 1 and price <= pos.current_sl) or \
-              (pos.sign == -1 and price >= pos.current_sl)
+        # --- check SL hit using the adverse extreme (catches wicks too) ---
+        hit = (pos.sign == 1 and adverse_extreme <= pos.current_sl) or \
+              (pos.sign == -1 and adverse_extreme >= pos.current_sl)
         if hit:
-            self._close_position(pos, price)
+            # Assume the fill happened at the SL price itself (a stop order
+            # fills at/near its trigger level), not at the raw wick tip.
+            self._close_position(pos, exit_price=pos.current_sl)
 
     def _close_position(self, pos: Position, exit_price: float):
         move = pos.sign * (exit_price - pos.entry_price)
