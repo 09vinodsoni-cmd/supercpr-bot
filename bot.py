@@ -64,6 +64,7 @@ class SymbolEngine:
         self.entered_this_block = False
         self.primary_touched = False
         self.no_trade_alerted = False
+        self.last_trailing_check_ms = None  # for since-last-poll range fetches
 
     def restore(self, saved: dict):
         # (Minimal restore -- CPR objects are cheap to recompute on next poll
@@ -74,6 +75,7 @@ class SymbolEngine:
         self.entered_this_block = saved.get("entered_this_block", False)
         self.primary_touched = saved.get("primary_touched", False)
         self.no_trade_alerted = saved.get("no_trade_alerted", False)
+        self.last_trailing_check_ms = saved.get("last_trailing_check_ms")
 
     def to_dict(self):
         return {
@@ -82,6 +84,7 @@ class SymbolEngine:
             "entered_this_block": self.entered_this_block,
             "primary_touched": self.primary_touched,
             "no_trade_alerted": self.no_trade_alerted,
+            "last_trailing_check_ms": self.last_trailing_check_ms,
         }
 
     # ------------------------------------------------------------------
@@ -152,49 +155,59 @@ class SymbolEngine:
         if self.active_signal != self.take_side:
             return  # this engine only ever trades its configured side
 
-        hours_elapsed = self._hours_since_block_start()
-        if hours_elapsed >= config.ENTRY_WINDOW_CANDLES:
-            if not self.no_trade_alerted:
-                self.no_trade_alerted = True
-                telegram_alert.send(
-                    f"⚪ <b>NO TRADE</b> {self.symbol} -- entry window (first "
-                    f"{config.ENTRY_WINDOW_CANDLES}h) closed without a fill."
-                )
-            return
+        now_ms = int(time.time() * 1000)
+        window_end_ms = self.active_block_open_time + config.ENTRY_WINDOW_CANDLES * 3600 * 1000
+        effective_end_ms = min(now_ms, window_end_ms)
 
-        price = shark_api.get_last_price(self.symbol)
-        if price is None:
+        # Look at the FULL window (block start -> now/window-end) each time,
+        # not just the current instant -- this catches a wick that touched a
+        # level between two polls, and also means a delayed/skipped poll
+        # can't cause us to falsely miss a touch that happened earlier in
+        # the window.
+        high, low, _ = shark_api.get_range_high_low(
+            self.symbol, self.active_block_open_time, effective_end_ms
+        )
+        if high is None:
+            print(f"[{self.symbol}] no {config.TOUCH_CHECK_INTERVAL} candle data yet for entry window check")
             return
 
         cpr = self.current_cpr
         side = self.take_side
+        sl_buffer = config.SL_BUFFER_POINTS_BY_SYMBOL[self.symbol]
 
         # --- Primary entry check (rule #4 / #6) ---
-        primary_hit = (side == "BUY" and price >= cpr.upper_cpr) or \
-                      (side == "SELL" and price <= cpr.lower_cpr)
-        if primary_hit and not self.primary_touched:
-            self.primary_touched = True
+        primary_hit = (side == "BUY" and high >= cpr.upper_cpr) or \
+                      (side == "SELL" and low <= cpr.lower_cpr)
+        if primary_hit:
             entry_price = cpr.upper_cpr if side == "BUY" else cpr.lower_cpr
             if side == "BUY":
-                initial_sl = cpr.s1 - config.SL_BUFFER_POINTS
+                initial_sl = cpr.s1 - sl_buffer
             else:
-                initial_sl = cpr.r1 + config.SL_BUFFER_POINTS
+                initial_sl = cpr.r1 + sl_buffer
             self.broker.open_position(self.symbol, side, "PRIMARY", entry_price, initial_sl)
             self.entered_this_block = True
             return
 
         # --- Secondary entry check (rule #5 / #6) -- only if primary NEVER touched ---
-        if not self.primary_touched:
-            secondary_hit = (side == "BUY" and price >= cpr.r1) or \
-                             (side == "SELL" and price <= cpr.s1)
-            if secondary_hit:
-                entry_price = cpr.r1 if side == "BUY" else cpr.s1
-                if side == "BUY":
-                    initial_sl = cpr.lower_cpr - config.SL_BUFFER_POINTS
-                else:
-                    initial_sl = cpr.upper_cpr + config.SL_BUFFER_POINTS
-                self.broker.open_position(self.symbol, side, "SECONDARY", entry_price, initial_sl)
-                self.entered_this_block = True
+        secondary_hit = (side == "BUY" and high >= cpr.r1) or \
+                        (side == "SELL" and low <= cpr.s1)
+        if secondary_hit:
+            entry_price = cpr.r1 if side == "BUY" else cpr.s1
+            if side == "BUY":
+                initial_sl = cpr.lower_cpr - sl_buffer
+            else:
+                initial_sl = cpr.upper_cpr + sl_buffer
+            self.broker.open_position(self.symbol, side, "SECONDARY", entry_price, initial_sl)
+            self.entered_this_block = True
+            return
+
+        # --- Neither level touched anywhere in the window -> NO TRADE ---
+        if now_ms >= window_end_ms and not self.no_trade_alerted:
+            self.no_trade_alerted = True
+            telegram_alert.send(
+                f"⚪ <b>NO TRADE</b> {self.symbol} -- entry window (first "
+                f"{config.ENTRY_WINDOW_CANDLES}h) closed without a fill."
+            )
 
 
 def load_engines_and_broker():
@@ -217,12 +230,22 @@ def run_one_cycle(engines: dict, broker: PaperBroker):
     for eng in engines.values():
         eng.poll()
 
-    prices = {}
-    for symbol in config.SYMBOL_ENGINES:
-        p = shark_api.get_last_price(symbol)
-        if p is not None:
-            prices[symbol] = p
-    broker.update_all(prices)
+    # Build {symbol: (high, low, last_close)} covering everything since the
+    # last successful poll for that symbol -- not just an instantaneous
+    # snapshot -- so a wick that touched an R-level or SL between two polls
+    # is still caught (the exchange's own candle already recorded it).
+    now_ms = int(time.time() * 1000)
+    price_ranges = {}
+    for symbol, eng in engines.items():
+        since_ms = eng.last_trailing_check_ms
+        if since_ms is None:
+            since_ms = now_ms - config.POLL_INTERVAL_SECONDS * 1000 * 3  # safety margin on first run
+        high, low, last_close = shark_api.get_range_high_low(symbol, since_ms, now_ms)
+        if high is not None:
+            price_ranges[symbol] = (high, low, last_close)
+        eng.last_trailing_check_ms = now_ms
+
+    broker.update_all(price_ranges)
 
     symbol_state = {sym: eng.to_dict() for sym, eng in engines.items()}
     state_store.save(symbol_state, broker.positions)
