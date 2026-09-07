@@ -65,7 +65,9 @@ def _parse_klines(raw) -> List[Candle]:
 
 
 def get_klines(symbol: str, interval: str, limit: int = 20) -> List[Candle]:
-    """Fetch recent candles for a symbol. Raises requests.HTTPError on failure."""
+    """Fetch recent candles for a symbol. Raises RuntimeError with the
+    exchange's own error message body on failure (not just 'Bad Request'),
+    so the Telegram alert / Actions log tells us exactly what's wrong."""
     url = f"{config.BASE_URL}{config.KLINES_ENDPOINT}"
     payload = {
         "symbol": symbol,
@@ -74,7 +76,11 @@ def get_klines(symbol: str, interval: str, limit: int = 20) -> List[Candle]:
         "priceType": "LAST_PRICE",
     }
     resp = requests.post(url, json=payload, timeout=15)
-    resp.raise_for_status()
+    if not resp.ok:
+        raise RuntimeError(
+            f"Shark klines request failed [{resp.status_code}] "
+            f"payload={payload} response_body={resp.text[:500]}"
+        )
     return _parse_klines(resp.json())
 
 
