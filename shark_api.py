@@ -22,12 +22,12 @@ class Candle:
     __slots__ = ("open_time", "open", "high", "low", "close", "close_time")
 
     def __init__(self, open_time, open_, high, low, close, close_time):
-        self.open_time = open_time      # epoch ms
+        self.open_time = int(open_time) if open_time is not None else None    # epoch ms
         self.open = float(open_)
         self.high = float(high)
         self.low = float(low)
         self.close = float(close)
-        self.close_time = close_time    # epoch ms
+        self.close_time = int(close_time) if close_time is not None else None  # epoch ms
 
     def __repr__(self):
         return (f"Candle(t={self.open_time}, O={self.open}, H={self.high}, "
@@ -35,9 +35,10 @@ class Candle:
 
 
 def _parse_klines(raw) -> List[Candle]:
-    """Best-effort parser that handles a couple of likely response shapes:
-    1) list of dicts: {openTime, open, high, low, close, closeTime}
-    2) list of lists (Binance-style): [openTime, open, high, low, close, ...]
+    """Confirmed via live debug output that Shark's candle fields are:
+    startTime, open, high, low, close, endTime, volume (values as strings).
+    Keeping the list-style fallback too in case a different endpoint/version
+    ever returns array-style rows.
     """
     candles = []
     items = raw.get("data", raw) if isinstance(raw, dict) else raw
@@ -45,12 +46,12 @@ def _parse_klines(raw) -> List[Candle]:
     for item in items:
         if isinstance(item, dict):
             candles.append(Candle(
-                open_time=item.get("openTime") or item.get("open_time") or item.get("time"),
+                open_time=item.get("startTime") or item.get("openTime") or item.get("open_time"),
                 open_=item.get("open"),
                 high=item.get("high"),
                 low=item.get("low"),
                 close=item.get("close"),
-                close_time=item.get("closeTime") or item.get("close_time"),
+                close_time=item.get("endTime") or item.get("closeTime") or item.get("close_time"),
             ))
         elif isinstance(item, (list, tuple)):
             candles.append(Candle(
@@ -86,9 +87,6 @@ def get_klines(symbol: str, interval: str, limit: int = 20) -> List[Candle]:
             f"payload={payload} response_body={resp.text[:500]}"
         )
     raw = resp.json()
-    items = raw.get("data", raw) if isinstance(raw, dict) else raw
-    if items:
-        print(f"[shark_api] DEBUG raw candle item (first): {items[0]!r}")
     candles = _parse_klines(raw)
     if not candles:
         print(f"[shark_api] WARNING: 0 candles parsed for payload={payload}. "
