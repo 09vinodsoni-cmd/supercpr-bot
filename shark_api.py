@@ -113,3 +113,33 @@ def get_klines_with_retry(symbol: str, interval: str, limit: int = 20,
             print(f"[shark_api] get_klines failed (attempt {attempt+1}/{retries}): {e}")
             time.sleep(backoff_seconds)
     raise last_err
+
+
+def get_range_high_low(symbol: str, start_ms: int, end_ms: int,
+                        interval: str = None, limit: int = 100):
+    """Fetches small-interval candles and aggregates the highest high /
+    lowest low / latest close across [start_ms, end_ms]. This lets the bot
+    catch a price wick that touched a level BETWEEN two 5-minute polls --
+    the exchange's own candle still records that high/low even though we
+    weren't polling at that exact second.
+
+    Returns (highest_high, lowest_low, last_close) or (None, None, None) if
+    no candles fall in the requested range (e.g. the range is older than
+    what `limit` candles at this interval cover).
+    """
+    interval = interval or config.TOUCH_CHECK_INTERVAL
+    try:
+        candles = get_klines_with_retry(symbol, interval, limit=limit)
+    except Exception as e:
+        print(f"[shark_api] get_range_high_low failed for {symbol}: {e}")
+        return None, None, None
+
+    in_range = [c for c in candles
+                if c.open_time is not None and start_ms <= c.open_time <= end_ms]
+    if not in_range:
+        return None, None, None
+
+    highest = max(c.high for c in in_range)
+    lowest = min(c.low for c in in_range)
+    last_close = in_range[-1].close
+    return highest, lowest, last_close
