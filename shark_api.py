@@ -85,7 +85,12 @@ def get_klines(symbol: str, interval: str, limit: int = 20) -> List[Candle]:
             f"Shark klines request failed [{resp.status_code}] "
             f"payload={payload} response_body={resp.text[:500]}"
         )
-    return _parse_klines(resp.json())
+    raw = resp.json()
+    candles = _parse_klines(raw)
+    if not candles:
+        print(f"[shark_api] WARNING: 0 candles parsed for payload={payload}. "
+              f"Raw response snippet: {str(raw)[:500]}")
+    return candles
 
 
 def get_last_price(symbol: str) -> Optional[float]:
