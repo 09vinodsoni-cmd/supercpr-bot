@@ -75,11 +75,17 @@ machine that's always on.
 2. **Symbol names** (`ETHUSDT`, `ETHINR`) — confirm these match exactly what
    Shark Exchange uses (case, no slash, etc.) via their `/v1/exchange`
    endpoint or app.
-3. **Touch detection is polling-based (every 5 min)**, not tick-by-tick. A
-   fast wick that touches a level and reverses within the 5-minute window
-   could be missed or seen slightly late. For paper trading this is a fine
-   approximation; if you later go live, use their WebSocket feed for
-   tick-accurate fills instead of polling.
+3. **Touch detection uses 5-minute candle High/Low ranges, not just a
+   snapshot.** Every poll looks at the aggregated high/low across all
+   5-minute candles covering the relevant window (the whole entry window
+   for entry checks; since-last-poll for trailing SL/R-levels). This means
+   a price wick that touches a level and reverts BETWEEN two 5-minute polls
+   is still caught, because the exchange's own candle already recorded
+   that high/low. The one edge case: if a single 5-min candle both tags a
+   profit level AND reverts to hit the (now-moved) SL within that same
+   candle, the bot conservatively assumes the SL was hit (can't know the
+   exact order within one candle) -- this matches how most backtesting
+   engines handle same-candle ambiguity.
 4. This is a **paper bot only**. Before ever connecting real order placement
    (`/v1/order/place-order`, which needs your API key + HMAC signature),
    run this for at least a few weeks and compare its logged trades against
@@ -99,6 +105,8 @@ machine that's always on.
 
 ## Adjusting risk / timeframes
 
-Everything tunable lives in `config.py` — `MAX_RISK_POINTS`,
-`SL_BUFFER_POINTS`, `ENTRY_CANDLE_INTERVAL`, `POLL_INTERVAL_SECONDS`, etc.
-No other file needs touching for those kinds of changes.
+Everything tunable lives in `config.py` — `MAX_RISK_POINTS_BY_SYMBOL`,
+`SL_BUFFER_POINTS_BY_SYMBOL` (per-symbol dicts, since ETHINR points are
+~100x the size of ETHUSDT points for the same real risk), `ENTRY_CANDLE_INTERVAL`,
+`POLL_INTERVAL_SECONDS`, etc. No other file needs touching for those kinds
+of changes.
