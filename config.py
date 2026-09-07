@@ -44,14 +44,30 @@ CPR_BLOCK_INTERVAL = "4h"
 # Candle size used to check the "first two candles" entry window rule.
 ENTRY_CANDLE_INTERVAL = "1h"
 
+# Fine-grained interval used to detect touches/wicks that happen BETWEEN
+# polls (e.g. a price spike at 11:32 that reverts before the 11:35 poll).
+# The exchange's own 5m candle still records that high/low even if we
+# weren't polling at that exact second, so this closes most of the gap
+# without needing to poll more often.
+TOUCH_CHECK_INTERVAL = "5m"
+RANGE_FETCH_LIMIT = 100  # ~8 hours of 5m candles -- comfortably covers a 4h block
+
 # How many entry-timeframe candles are valid for entry after a new CPR block starts.
 ENTRY_WINDOW_CANDLES = 2
 
 # ---------------------------------------------------------------------------
 # Risk / position sizing
 # ---------------------------------------------------------------------------
-MAX_RISK_POINTS = 10          # Rule 7: Position Size = 10 / SL distance
-SL_BUFFER_POINTS = 2          # Rule 6: the "+/- 2 points" buffer on all SLs
+# Max risk points differ per symbol because ETHINR points are ~100x the size
+# of ETHUSDT points (INR vs USD quoting) for the same real-world risk.
+MAX_RISK_POINTS_BY_SYMBOL = {
+    "ETHUSDT": 10,
+    "ETHINR": 1000,
+}
+SL_BUFFER_POINTS_BY_SYMBOL = {
+    "ETHUSDT": 2,
+    "ETHINR": 200,   # same ~100x scaling as the risk buffer above
+}
 
 # ---------------------------------------------------------------------------
 # Bot behaviour
