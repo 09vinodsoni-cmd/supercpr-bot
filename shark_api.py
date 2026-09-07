@@ -86,6 +86,9 @@ def get_klines(symbol: str, interval: str, limit: int = 20) -> List[Candle]:
             f"payload={payload} response_body={resp.text[:500]}"
         )
     raw = resp.json()
+    items = raw.get("data", raw) if isinstance(raw, dict) else raw
+    if items:
+        print(f"[shark_api] DEBUG raw candle item (first): {items[0]!r}")
     candles = _parse_klines(raw)
     if not candles:
         print(f"[shark_api] WARNING: 0 candles parsed for payload={payload}. "
