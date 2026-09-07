@@ -1,15 +1,15 @@
 {
   "symbol_state": {
     "ETHUSDT": {
-      "active_block_open_time": null,
-      "active_signal": null,
+      "active_block_open_time": 1788796800000,
+      "active_signal": "SELL",
       "entered_this_block": false,
       "primary_touched": false,
       "no_trade_alerted": false
     },
     "ETHINR": {
-      "active_block_open_time": null,
-      "active_signal": null,
+      "active_block_open_time": 1788796800000,
+      "active_signal": "SELL",
       "entered_this_block": false,
       "primary_touched": false,
       "no_trade_alerted": false
