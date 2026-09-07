@@ -1,0 +1,41 @@
+name: Super CPR Paper Bot
+
+on:
+  schedule:
+    # GitHub's minimum cron granularity is 5 minutes, and under load it can
+    # run a few minutes late -- that's the trade-off vs. a VPS mentioned earlier.
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}   # lets you trigger a run manually from the Actions tab
+
+permissions:
+  contents: write   # needed so the workflow can commit state.json back
+
+concurrency:
+  group: cpr-paper-bot
+  cancel-in-progress: false   # never kill a run that's mid-way through updating state
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements.txt
+
+      - name: Run one poll cycle
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python bot.py --once
+
+      - name: Commit updated state (if anything changed)
+        run: |
+          git config user.name "cpr-paper-bot"
+          git config user.email "cpr-paper-bot@users.noreply.github.com"
+          git add state.json trade_log.csv
+          git diff --cached --quiet || git commit -m "Bot state update [skip ci]"
+          git push
