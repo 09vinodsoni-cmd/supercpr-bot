@@ -31,6 +31,8 @@ class Position:
     realized_pnl_points: float = 0.0
     opened_at: float = field(default_factory=time.time)
     closed_at: Optional[float] = None
+    leverage: float = 0.0        # this trade's own SL-implied leverage
+    sl_percent: float = 0.0      # abs(entry-sl)/entry * 100
 
     @property
     def sign(self) -> int:
@@ -46,32 +48,112 @@ class Position:
 class PaperBroker:
     def __init__(self):
         self.positions: list[Position] = []
+        self.capital_inr = config.STARTING_CAPITAL_INR
+        # Margin currently locked per symbol, always in INR (converted for
+        # USDT-quoted symbols using the live rate) -- mirrors what the real
+        # exchange account's per-symbol isolated margin would show.
+        self.used_margin_inr_by_symbol: dict = {}
+        self.inr_per_usdt: float = 0.0  # set every poll from live ETHINR/ETHUSDT prices
+
+    def set_rate(self, inr_per_usdt: float):
+        self.inr_per_usdt = inr_per_usdt
+
+    def _to_inr(self, amount_native: float, symbol: str) -> float:
+        if config.QUOTE_CURRENCY_BY_SYMBOL[symbol] == "INR":
+            return amount_native
+        # USDT-quoted -- convert using the live rate; if we don't have one
+        # yet (very first poll), fall back to a rough placeholder so we
+        # never divide/multiply by zero.
+        rate = self.inr_per_usdt if self.inr_per_usdt > 0 else 95.0
+        return amount_native * rate
+
+    @staticmethod
+    def _leverage_for_sl_percent(sl_percent: float) -> float:
+        if sl_percent <= 0:
+            return config.MAX_LEVERAGE_CAP
+        raw = 100 / (sl_percent * config.LEVERAGE_SAFETY_CUSHION)
+        return max(1.0, min(config.MAX_LEVERAGE_CAP, raw))
+
+    def _other_symbols_margin_inr(self, symbol: str) -> float:
+        return sum(m for sym, m in self.used_margin_inr_by_symbol.items() if sym != symbol)
+
+    def recompute_margins_from_positions(self):
+        """Rebuild used_margin_inr_by_symbol from currently-OPEN positions.
+        Needed after loading state from disk, since each --once run starts
+        a fresh process -- the margin dict itself isn't persisted, but it's
+        fully derivable from each position's stored size/entry_price/leverage."""
+        self.used_margin_inr_by_symbol = {}
+        by_symbol: dict = {}
+        for p in self.positions:
+            if p.status == "OPEN":
+                by_symbol.setdefault(p.symbol, []).append(p)
+        for symbol, positions in by_symbol.items():
+            if not positions:
+                continue
+            leverage = positions[0].leverage or config.MAX_LEVERAGE_CAP
+            total_value_native = sum(p.size * p.entry_price for p in positions)
+            margin_native = total_value_native / leverage
+            self.used_margin_inr_by_symbol[symbol] = self._to_inr(margin_native, symbol)
 
     # ------------------------------------------------------------------
     # Opening
     # ------------------------------------------------------------------
     def open_position(self, symbol: str, side: str, entry_type: str,
-                       entry_price: float, initial_sl: float) -> Position:
+                       entry_price: float, initial_sl: float) -> Optional[Position]:
         risk_distance = abs(entry_price - initial_sl)
         if risk_distance <= 0:
             raise ValueError("SL distance must be > 0")
         max_risk = config.MAX_RISK_POINTS_BY_SYMBOL[symbol]
         size = round(max_risk / risk_distance, 6)  # rule #7
+        sl_percent = (risk_distance / entry_price) * 100
 
-        pos = Position(
+        candidate = Position(
             id=str(uuid.uuid4())[:8],
             symbol=symbol, side=side, entry_type=entry_type,
             entry_price=entry_price, initial_sl=initial_sl,
             size=size, risk_distance=risk_distance, current_sl=initial_sl,
+            sl_percent=sl_percent,
         )
-        self.positions.append(pos)
+
+        # Rule (live-trading design, tested here first): if this symbol
+        # already has open position(s), the exchange only has ONE net
+        # position per symbol -- so leverage must be the SAFEST (lowest)
+        # across ALL positions stacked on it (existing + this new one).
+        existing = self.open_positions_for(symbol)
+        stack = existing + [candidate]
+        safe_leverage = min(self._leverage_for_sl_percent(p.sl_percent) for p in stack)
+
+        total_position_value_native = sum(p.size * p.entry_price for p in stack)
+        new_total_margin_native = total_position_value_native / safe_leverage
+        new_total_margin_inr = self._to_inr(new_total_margin_native, symbol)
+
+        other_margin_inr = self._other_symbols_margin_inr(symbol)
+        if other_margin_inr + new_total_margin_inr > self.capital_inr:
+            telegram_alert.send(
+                f"🚫 <b>TRADE SKIPPED (insufficient margin)</b> {symbol} {side}\n"
+                f"Would need ₹{new_total_margin_inr:,.0f} for this symbol "
+                f"(₹{other_margin_inr:,.0f} already used elsewhere), "
+                f"capital is ₹{self.capital_inr:,.0f}."
+            )
+            return None
+
+        # Apply the (possibly revised) safe leverage to every position in
+        # the stack, since the exchange's single per-symbol leverage
+        # setting now covers all of them.
+        for p in existing:
+            p.leverage = safe_leverage
+        candidate.leverage = safe_leverage
+        self.used_margin_inr_by_symbol[symbol] = new_total_margin_inr
+
+        self.positions.append(candidate)
 
         telegram_alert.send(
             f"🟢 <b>NEW {entry_type} {side}</b> {symbol}\n"
             f"Entry: {entry_price:.2f} | Initial SL: {initial_sl:.2f}\n"
-            f"Size: {size} | Risk: {max_risk} pts | id={pos.id}"
+            f"Size: {size} | Risk: {max_risk} pts | Leverage: {safe_leverage:.1f}x\n"
+            f"Symbol margin now: ₹{new_total_margin_inr:,.0f} | id={candidate.id}"
         )
-        return pos
+        return candidate
 
     # ------------------------------------------------------------------
     # Per-tick management (rule #9 trailing, #11 independence)
@@ -140,6 +222,19 @@ class PaperBroker:
         pos.status = "CLOSED"
         pos.closed_at = time.time()
 
+        # Recompute this symbol's margin/leverage now that one fewer
+        # position is stacked on it (frees margin for future trades).
+        remaining = self.open_positions_for(pos.symbol)
+        if remaining:
+            safe_leverage = min(self._leverage_for_sl_percent(p.sl_percent) for p in remaining)
+            total_value_native = sum(p.size * p.entry_price for p in remaining)
+            new_margin_native = total_value_native / safe_leverage
+            for p in remaining:
+                p.leverage = safe_leverage
+            self.used_margin_inr_by_symbol[pos.symbol] = self._to_inr(new_margin_native, pos.symbol)
+        else:
+            self.used_margin_inr_by_symbol.pop(pos.symbol, None)
+
         emoji = "✅" if pos.realized_pnl_points >= 0 else "❌"
         telegram_alert.send(
             f"{emoji} <b>CLOSED</b> {pos.symbol} {pos.side} id={pos.id}\n"
@@ -154,5 +249,7 @@ class PaperBroker:
         open_pos = [p for p in self.positions if p.status == "OPEN"]
         closed_pos = [p for p in self.positions if p.status == "CLOSED"]
         realized = sum(p.realized_pnl_points for p in closed_pos)
+        total_margin_used = sum(self.used_margin_inr_by_symbol.values())
         return (f"Open: {len(open_pos)} | Closed: {len(closed_pos)} | "
-                f"Realized pts (closed only): {realized:.4f}")
+                f"Realized pts (closed only): {realized:.4f} | "
+                f"Margin used: ₹{total_margin_used:,.0f} / ₹{self.capital_inr:,.0f}")
