@@ -36,13 +36,15 @@ def log_trade_csv(broker: PaperBroker):
         writer = csv.writer(f)
         writer.writerow([
             "id", "symbol", "side", "entry_type", "entry_price", "initial_sl",
-            "current_sl", "size", "status", "partial_exit_done", "max_r_locked",
+            "current_sl", "size", "leverage", "sl_percent", "status",
+            "partial_exit_done", "max_r_locked",
             "realized_pnl_points", "opened_at", "closed_at",
         ])
         for p in broker.positions:
             writer.writerow([
                 p.id, p.symbol, p.side, p.entry_type, p.entry_price, p.initial_sl,
-                p.current_sl, p.size, p.status, p.partial_exit_done, p.max_r_locked,
+                p.current_sl, p.size, round(p.leverage, 2), round(p.sl_percent, 4),
+                p.status, p.partial_exit_done, p.max_r_locked,
                 round(p.realized_pnl_points, 4),
                 datetime.fromtimestamp(p.opened_at, tz=timezone.utc).isoformat(),
                 datetime.fromtimestamp(p.closed_at, tz=timezone.utc).isoformat() if p.closed_at else "",
@@ -227,6 +229,14 @@ def load_engines_and_broker():
 def run_one_cycle(engines: dict, broker: PaperBroker):
     """One full poll cycle: check for new blocks, check entry windows,
     update trailing SL on open positions, persist state, log trades."""
+    # Refresh the INR/USDT conversion rate BEFORE polling, since an entry
+    # opened during eng.poll() needs it for margin-in-INR calculation.
+    usdt_price = shark_api.get_last_price("ETHUSDT")
+    inr_price = shark_api.get_last_price("ETHINR")
+    if usdt_price and inr_price:
+        broker.set_rate(inr_price / usdt_price)
+    broker.recompute_margins_from_positions()
+
     for eng in engines.values():
         eng.poll()
 
