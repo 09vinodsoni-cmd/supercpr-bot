@@ -6,7 +6,7 @@
       "entered_this_block": true,
       "primary_touched": false,
       "no_trade_alerted": false,
-      "last_trailing_check_ms": 1788891040315
+      "last_trailing_check_ms": 1788891423472
     },
     "ETHINR": {
       "active_block_open_time": 1788883200000,
@@ -14,7 +14,7 @@
       "entered_this_block": false,
       "primary_touched": false,
       "no_trade_alerted": false,
-      "last_trailing_check_ms": 1788891040315
+      "last_trailing_check_ms": 1788891423472
     }
   },
   "positions": [
@@ -34,7 +34,9 @@
       "remaining_fraction": 1.0,
       "realized_pnl_points": -9.999999914999874,
       "opened_at": 1788812876.9662323,
-      "closed_at": 1788847149.701534
+      "closed_at": 1788847149.701534,
+      "leverage": 0.0,
+      "sl_percent": 0.0
     },
     {
       "id": "78c32ac1",
@@ -52,7 +54,9 @@
       "remaining_fraction": 0.5,
       "realized_pnl_points": 5.000001682499972,
       "opened_at": 1788829657.4759703,
-      "closed_at": 1788840118.7764635
+      "closed_at": 1788840118.7764635,
+      "leverage": 0.0,
+      "sl_percent": 0.0
     },
     {
       "id": "1c85129e",
@@ -70,7 +74,9 @@
       "remaining_fraction": 1.0,
       "realized_pnl_points": -1000.00032,
       "opened_at": 1788840116.813966,
-      "closed_at": 1788840119.3897088
+      "closed_at": 1788840119.3897088,
+      "leverage": 0.0,
+      "sl_percent": 0.0
     },
     {
       "id": "f496ed56",
@@ -88,7 +94,9 @@
       "remaining_fraction": 1.0,
       "realized_pnl_points": -10.000006280000285,
       "opened_at": 1788854825.0636814,
-      "closed_at": 1788854828.9474921
+      "closed_at": 1788854828.9474921,
+      "leverage": 0.0,
+      "sl_percent": 0.0
     },
     {
       "id": "ad15209a",
@@ -106,7 +114,9 @@
       "remaining_fraction": 0.5,
       "realized_pnl_points": 500.00040149999995,
       "opened_at": 1788868877.304117,
-      "closed_at": 1788876947.7167337
+      "closed_at": 1788876947.7167337,
+      "leverage": 0.0,
+      "sl_percent": 0.0
     },
     {
       "id": "a41c0048",
@@ -124,7 +134,9 @@
       "remaining_fraction": 1.0,
       "realized_pnl_points": 0.0,
       "opened_at": 1788883281.27377,
-      "closed_at": null
+      "closed_at": null,
+      "leverage": 0.0,
+      "sl_percent": 0.0
     }
   ]
 }
