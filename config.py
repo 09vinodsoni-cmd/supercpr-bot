@@ -70,10 +70,29 @@ SL_BUFFER_POINTS_BY_SYMBOL = {
 }
 
 # ---------------------------------------------------------------------------
+# Simulated capital / leverage / margin (mirrors what real live trading will
+# do -- tested here in paper mode first before any real money is involved)
+# ---------------------------------------------------------------------------
+STARTING_CAPITAL_INR = 70000
+
+# Leverage is calculated PER TRADE from its own SL distance:
+#   leverage = min(MAX_LEVERAGE_CAP, 100 / (sl_percent * LEVERAGE_SAFETY_CUSHION))
+# Cushion=1.5 means liquidation stays 50% further away than our own SL.
+LEVERAGE_SAFETY_CUSHION = 1.5
+MAX_LEVERAGE_CAP = 30
+
+# What currency each symbol's price/margin is denominated in. ETHUSDT margin
+# is in USDT and gets converted to INR (using the live ETHINR/ETHUSDT ratio)
+# so it can be checked against one unified INR capital pool alongside ETHINR.
+QUOTE_CURRENCY_BY_SYMBOL = {
+    "ETHUSDT": "USDT",
+    "ETHINR": "INR",
+}
+
+# ---------------------------------------------------------------------------
 # Bot behaviour
 # ---------------------------------------------------------------------------
 POLL_INTERVAL_SECONDS = 5 * 60   # check every 5 minutes (paper trading)
-STARTING_PAPER_BALANCE = 100000  # purely cosmetic for the paper P&L ledger
 
 STATE_FILE = "state.json"
 TRADE_LOG_FILE = "trade_log.csv"
