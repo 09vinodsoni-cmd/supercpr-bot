@@ -90,8 +90,8 @@ TELEGRAM_ENABLED = True
 # you haven't set the env var -- for GitHub Actions, set these as repo
 # Secrets named TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID instead of editing this
 # file, so the token never sits in your (possibly public-ish) git history.
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8440626683:AAEQb7AyWik_yU1-NQJ376Lq49yUHPErLFE")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "6131769696")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 # ---------------------------------------------------------------------------
 # IMPORTANT NOTE ON THE KLINES API
