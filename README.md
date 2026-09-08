@@ -110,3 +110,28 @@ Everything tunable lives in `config.py` — `MAX_RISK_POINTS_BY_SYMBOL`,
 ~100x the size of ETHUSDT points for the same real risk), `ENTRY_CANDLE_INTERVAL`,
 `POLL_INTERVAL_SECONDS`, etc. No other file needs touching for those kinds
 of changes.
+
+## Simulated capital / leverage / margin (live-trading rehearsal)
+
+This is preparation for eventual live trading, tested here in paper mode
+first:
+
+- `STARTING_CAPITAL_INR` (config.py) is the pretend account size.
+- Each trade's leverage is calculated from its **own** SL distance:
+  `leverage = min(MAX_LEVERAGE_CAP, 100 / (sl_percent * LEVERAGE_SAFETY_CUSHION))`
+  — tighter SL → higher leverage (up to the cap); wider SL → lower leverage.
+  This keeps liquidation always further away than our own SL, with a
+  configurable safety cushion.
+- If a symbol already has open position(s) and a new one stacks on top of
+  it, **all** positions on that symbol switch to the SAFEST (lowest)
+  leverage among them — mirroring the real exchange, where leverage is a
+  single per-symbol setting, not per-position. Each trade's own SL order
+  stays completely independent regardless.
+- Before opening any trade, the bot checks whether the required margin
+  (converted to INR for USDT-quoted ETHUSDT, using the live ETHINR/ETHUSDT
+  rate) fits within remaining capital. If not, the trade is **skipped**
+  with a Telegram alert — never force-opened.
+- `trade_log.csv` now includes `leverage` and `sl_percent` columns, and the
+  console summary line shows current margin usage, so you can watch how
+  this behaves over several days of paper trading before any real money
+  is involved.
