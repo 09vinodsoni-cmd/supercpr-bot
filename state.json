@@ -1,20 +1,20 @@
 {
   "symbol_state": {
     "ETHUSDT": {
-      "active_block_open_time": 1788825600000,
-      "active_signal": "BUY",
-      "entered_this_block": true,
-      "primary_touched": false,
-      "no_trade_alerted": false,
-      "last_trailing_check_ms": 1788829659106
-    },
-    "ETHINR": {
-      "active_block_open_time": 1788825600000,
-      "active_signal": "BUY",
+      "active_block_open_time": 1788840000000,
+      "active_signal": "SELL",
       "entered_this_block": false,
       "primary_touched": false,
       "no_trade_alerted": false,
-      "last_trailing_check_ms": 1788829659106
+      "last_trailing_check_ms": 1788840117438
+    },
+    "ETHINR": {
+      "active_block_open_time": 1788840000000,
+      "active_signal": "SELL",
+      "entered_this_block": true,
+      "primary_touched": false,
+      "no_trade_alerted": false,
+      "last_trailing_check_ms": 1788840117438
     }
   },
   "positions": [
@@ -45,14 +45,32 @@
       "initial_sl": 2474.8233333333337,
       "size": 0.771903,
       "risk_distance": 12.954999999999927,
-      "current_sl": 2474.8233333333337,
-      "status": "OPEN",
+      "current_sl": 2487.7783333333336,
+      "status": "CLOSED",
+      "partial_exit_done": true,
+      "max_r_locked": 1,
+      "remaining_fraction": 0.5,
+      "realized_pnl_points": 5.000001682499972,
+      "opened_at": 1788829657.4759703,
+      "closed_at": 1788840118.7764635
+    },
+    {
+      "id": "1c85129e",
+      "symbol": "ETHINR",
+      "side": "SELL",
+      "entry_type": "PRIMARY",
+      "entry_price": 237671.0,
+      "initial_sl": 239356.0,
+      "size": 0.593472,
+      "risk_distance": 1685.0,
+      "current_sl": 239356.0,
+      "status": "CLOSED",
       "partial_exit_done": false,
       "max_r_locked": 0,
       "remaining_fraction": 1.0,
-      "realized_pnl_points": 0.0,
-      "opened_at": 1788829657.4759703,
-      "closed_at": null
+      "realized_pnl_points": -1000.00032,
+      "opened_at": 1788840116.813966,
+      "closed_at": 1788840119.3897088
     }
   ]
 }
