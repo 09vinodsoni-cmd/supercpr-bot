@@ -13,15 +13,19 @@ from paper_broker import Position
 
 def load() -> Dict[str, Any]:
     if not os.path.exists(config.STATE_FILE):
-        return {"symbol_state": {}, "positions": []}
+        return {"symbol_state": {}, "positions": [], "daily_stats": {}}
     with open(config.STATE_FILE, "r") as f:
-        return json.load(f)
+        data = json.load(f)
+        data.setdefault("daily_stats", {})
+        return data
 
 
-def save(symbol_state: Dict[str, Any], positions: list[Position]) -> None:
+def save(symbol_state: Dict[str, Any], positions: list[Position],
+          daily_stats: Dict[str, Any]) -> None:
     data = {
         "symbol_state": symbol_state,
         "positions": [asdict(p) for p in positions],
+        "daily_stats": daily_stats,
     }
     tmp_path = config.STATE_FILE + ".tmp"
     with open(tmp_path, "w") as f:
