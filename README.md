@@ -91,6 +91,28 @@ machine that's always on.
    run this for at least a few weeks and compare its logged trades against
    what you'd have taken manually.
 
+## Telegram control commands (buttons + typed)
+
+A fixed reply-keyboard is attached to every message the bot sends, so these
+are always tappable in Telegram. Tapping sends a REAL, visible, saved chat
+message (not Telegram's silent inline-button callbacks) -- so every command
+you send stays in the chat history.
+
+| Button / command | Effect |
+|---|---|
+| **ON** / **OFF** | Master switch. OFF stops all NEW entries; existing open positions are still trailed/managed normally. |
+| **MANUAL** / **AUTO** | Stored mode flag (shown in snapshots). No execution difference in paper mode yet -- this matters once live trading is added: MANUAL will alert-only, AUTO will place real orders. |
+| **EMERGENCY STOP** | Immediately closes every currently open position at its current price. |
+| **SNAPSHOT** | Sends the Live Positions Snapshot on demand (same as the automatic one sent on every new block). |
+| **PAUSE ETHUSDT** / **RESUME ETHUSDT** | Stop/resume new entries on ETHUSDT only (ETHINR keeps trading). |
+| **PAUSE ETHINR** / **RESUME ETHINR** | Same, for ETHINR only. |
+| *(dynamic, attached to snapshots)* **CLOSE `<id>`** | Closes that one specific position at its current price. |
+| `/setsl <id> <price>` (typed, no button) | Manually overrides one position's current stop-loss price. |
+
+All of this is processed once per poll cycle (checks Telegram for new
+messages right at the start of `run_one_cycle`), so a command can take up to
+one poll interval to be acted on.
+
 ## Files
 
 | File | Purpose |
