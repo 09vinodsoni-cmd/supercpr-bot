@@ -74,10 +74,16 @@ def send_live_snapshot(broker: PaperBroker, block_label: str):
         body = "\n".join(lines)
     else:
         body = "(no open positions right now)"
+
+    # One CLOSE button per open position, added on top of the static keyboard.
+    close_rows = [[f"CLOSE {p.id}"] for p in open_positions]
+    keyboard_rows = telegram_alert.STATIC_KEYBOARD_ROWS + close_rows
+
     telegram_alert.send(
         f"📋 <b>Live Positions Snapshot</b> (new block: {block_label})\n"
         f"{body}\n"
-        f"Total open: {len(open_positions)} | Margin used: ₹{total_margin:,.0f} / ₹{broker.capital_inr:,.0f}"
+        f"Total open: {len(open_positions)} | Margin used: ₹{total_margin:,.0f} / ₹{broker.capital_inr:,.0f}",
+        keyboard_rows=keyboard_rows,
     )
 
 
@@ -114,11 +120,13 @@ def send_daily_summary(broker: PaperBroker, daily_stats: dict, day_start_s: floa
 class SymbolEngine:
     """Tracks CPR block state + entry window for ONE symbol."""
 
-    def __init__(self, symbol: str, take_side: str, broker: PaperBroker, daily_stats: dict):
+    def __init__(self, symbol: str, take_side: str, broker: PaperBroker,
+                 daily_stats: dict, bot_control: dict):
         self.symbol = symbol
         self.take_side = take_side  # "BUY" or "SELL" -- only this side is ever traded
         self.broker = broker
         self.daily_stats = daily_stats  # shared dict across engines, for NO_TRADE counting
+        self.bot_control = bot_control  # shared dict: ON/OFF, MANUAL/AUTO, paused symbols
 
         self.current_cpr = None
         self.previous_cpr = None
@@ -220,6 +228,10 @@ class SymbolEngine:
             return
         if self.active_signal != self.take_side:
             return  # this engine only ever trades its configured side
+        if not self.bot_control.get("master_enabled", True):
+            return  # bot OFF via Telegram -- no new entries, existing ones still managed
+        if self.symbol in self.bot_control.get("paused_symbols", []):
+            return  # this symbol paused via Telegram -- no new entries on it
 
         now_ms = int(time.time() * 1000)
         window_end_ms = self.active_block_open_time + config.ENTRY_WINDOW_CANDLES * 3600 * 1000
@@ -277,24 +289,155 @@ class SymbolEngine:
             )
 
 
+def _handle_emergency_stop(broker: PaperBroker):
+    open_positions = [p for p in broker.positions if p.status == "OPEN"]
+    if not open_positions:
+        telegram_alert.send("🛑 EMERGENCY STOP -- no open positions to close.")
+        return
+    price_cache = {}
+    closed_count = 0
+    for p in open_positions:
+        try:
+            if p.symbol not in price_cache:
+                price_cache[p.symbol] = shark_api.get_last_price(p.symbol)
+            price = price_cache.get(p.symbol)
+            if price is not None:
+                broker._close_position(p, exit_price=price)
+                closed_count += 1
+        except Exception as e:
+            print(f"[emergency_stop] failed to close {p.id}: {e}")
+    telegram_alert.send(
+        f"🛑 <b>EMERGENCY STOP executed</b> -- closed {closed_count}/{len(open_positions)} position(s)."
+        + ("" if closed_count == len(open_positions) else
+           f"\n⚠️ {len(open_positions) - closed_count} could not be closed (price fetch failed) -- try again.")
+    )
+
+
+def _handle_close_position(broker: PaperBroker, pos_id: str):
+    pos = next((p for p in broker.positions if p.id == pos_id and p.status == "OPEN"), None)
+    if not pos:
+        telegram_alert.send(f"⚠️ No OPEN position found with id={pos_id}.")
+        return
+    try:
+        price = shark_api.get_last_price(pos.symbol)
+    except Exception as e:
+        print(f"[close_position] price fetch failed for {pos.symbol}: {e}")
+        price = None
+    if price is None:
+        telegram_alert.send(f"⚠️ Could not fetch current price for {pos.symbol}, try again.")
+        return
+    broker._close_position(pos, exit_price=price)  # sends its own CLOSED alert
+
+
+def _handle_setsl(broker: PaperBroker, text: str):
+    parts = text.split()
+    if len(parts) != 3:
+        telegram_alert.send("⚠️ Usage: /setsl <id> <price>")
+        return
+    _, pos_id, price_str = parts
+    pos = next((p for p in broker.positions if p.id == pos_id and p.status == "OPEN"), None)
+    if not pos:
+        telegram_alert.send(f"⚠️ No OPEN position found with id={pos_id}.")
+        return
+    try:
+        new_sl = float(price_str)
+    except ValueError:
+        telegram_alert.send(f"⚠️ '{price_str}' is not a valid price.")
+        return
+    old_sl = pos.current_sl
+    pos.current_sl = new_sl
+    telegram_alert.send(f"🎯 SL for {pos_id} manually overridden: {old_sl:.2f} → {new_sl:.2f}")
+
+
+def _handle_command_text(text: str, broker: PaperBroker, bot_control: dict):
+    upper = text.strip().upper()
+
+    if upper == "ON":
+        bot_control["master_enabled"] = True
+        telegram_alert.send("✅ Bot turned ON. New trades will be taken normally.")
+    elif upper == "OFF":
+        bot_control["master_enabled"] = False
+        telegram_alert.send("🛑 Bot turned OFF. No NEW trades will be taken (existing positions still managed/trailed).")
+    elif upper == "MANUAL":
+        bot_control["mode"] = "MANUAL"
+        telegram_alert.send("✋ Mode set to MANUAL. (Paper mode: no execution difference yet -- this will matter once live trading is enabled.)")
+    elif upper == "AUTO":
+        bot_control["mode"] = "AUTO"
+        telegram_alert.send("🔄 Mode set to AUTO.")
+    elif upper == "EMERGENCY STOP":
+        _handle_emergency_stop(broker)
+    elif upper == "SNAPSHOT":
+        send_live_snapshot(broker, "on-demand")
+    elif upper.startswith("PAUSE "):
+        sym = upper.replace("PAUSE ", "").strip()
+        if sym in config.SYMBOL_ENGINES:
+            paused = set(bot_control.get("paused_symbols", []))
+            paused.add(sym)
+            bot_control["paused_symbols"] = list(paused)
+            telegram_alert.send(f"⏸ {sym} paused -- no new trades on this symbol until resumed.")
+        else:
+            telegram_alert.send(f"⚠️ Unknown symbol '{sym}'.")
+    elif upper.startswith("RESUME "):
+        sym = upper.replace("RESUME ", "").strip()
+        if sym in config.SYMBOL_ENGINES:
+            paused = set(bot_control.get("paused_symbols", []))
+            paused.discard(sym)
+            bot_control["paused_symbols"] = list(paused)
+            telegram_alert.send(f"▶️ {sym} resumed.")
+        else:
+            telegram_alert.send(f"⚠️ Unknown symbol '{sym}'.")
+    elif upper.startswith("CLOSE "):
+        pos_id = text.strip().split(" ", 1)[1].strip()
+        _handle_close_position(broker, pos_id)
+    elif text.strip().startswith("/setsl"):
+        _handle_setsl(broker, text.strip())
+    # else: unrecognized text -- ignore silently (could be a stray chat message)
+
+
+def process_telegram_commands(broker: PaperBroker, bot_control: dict):
+    last_id = bot_control.get("last_update_id")
+    offset = (last_id + 1) if last_id is not None else None
+    updates = telegram_alert.get_updates(offset=offset)
+    for upd in updates:
+        bot_control["last_update_id"] = upd["update_id"]
+        msg = upd.get("message")
+        if not msg:
+            continue
+        text = msg.get("text")
+        if not text:
+            continue
+        try:
+            _handle_command_text(text, broker, bot_control)
+        except Exception as e:
+            print(f"[telegram] command handling error for '{text}': {e}")
+            traceback.print_exc()
+
+
 def load_engines_and_broker():
     broker = PaperBroker()
     saved = state_store.load()
     broker.positions = state_store.restore_positions(saved.get("positions", []))
     daily_stats = saved.get("daily_stats") or {"day_start_ms": None, "no_trade_count": 0}
+    bot_control = saved.get("bot_control") or {
+        "master_enabled": True, "mode": "AUTO",
+        "paused_symbols": [], "last_update_id": None,
+    }
 
     engines = {}
     for symbol, cfg in config.SYMBOL_ENGINES.items():
-        eng = SymbolEngine(symbol, cfg["take_side"], broker, daily_stats)
+        eng = SymbolEngine(symbol, cfg["take_side"], broker, daily_stats, bot_control)
         if symbol in saved.get("symbol_state", {}):
             eng.restore(saved["symbol_state"][symbol])
         engines[symbol] = eng
-    return engines, broker, daily_stats
+    return engines, broker, daily_stats, bot_control
 
 
-def run_one_cycle(engines: dict, broker: PaperBroker, daily_stats: dict):
-    """One full poll cycle: check for new blocks, check entry windows,
-    update trailing SL on open positions, persist state, log trades."""
+def run_one_cycle(engines: dict, broker: PaperBroker, daily_stats: dict, bot_control: dict):
+    """One full poll cycle: process Telegram commands, check for new blocks,
+    check entry windows, update trailing SL on open positions, persist
+    state, log trades."""
+    process_telegram_commands(broker, bot_control)
+
     # Refresh the INR/USDT conversion rate BEFORE polling, since an entry
     # opened during eng.poll() needs it for margin-in-INR calculation.
     usdt_price = shark_api.get_last_price("ETHUSDT")
@@ -341,7 +484,7 @@ def run_one_cycle(engines: dict, broker: PaperBroker, daily_stats: dict):
     broker.update_all(price_ranges)
 
     symbol_state = {sym: eng.to_dict() for sym, eng in engines.items()}
-    state_store.save(symbol_state, broker.positions, daily_stats)
+    state_store.save(symbol_state, broker.positions, daily_stats, bot_control)
     log_trade_csv(broker)
 
     print(f"[{datetime.now().isoformat()}] {broker.summary()}")
@@ -350,14 +493,14 @@ def run_one_cycle(engines: dict, broker: PaperBroker, daily_stats: dict):
 def main():
     run_once = "--once" in sys.argv  # used by the GitHub Actions workflow
 
-    engines, broker, daily_stats = load_engines_and_broker()
+    engines, broker, daily_stats, bot_control = load_engines_and_broker()
 
     if run_once:
         # Single cycle then exit -- GitHub Actions runs this on a cron
         # schedule, checking out fresh state.json each time and committing
         # the updated one back at the end of the workflow.
         try:
-            run_one_cycle(engines, broker, daily_stats)
+            run_one_cycle(engines, broker, daily_stats, bot_control)
         except Exception as e:
             print(f"[bot] single-cycle error: {e}")
             traceback.print_exc()
@@ -370,7 +513,7 @@ def main():
     )
     while True:
         try:
-            run_one_cycle(engines, broker, daily_stats)
+            run_one_cycle(engines, broker, daily_stats, bot_control)
         except Exception as e:
             print(f"[bot] main loop error: {e}")
             traceback.print_exc()
