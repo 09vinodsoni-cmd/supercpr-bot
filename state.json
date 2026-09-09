@@ -6,7 +6,7 @@
       "entered_this_block": false,
       "primary_touched": false,
       "no_trade_alerted": false,
-      "last_trailing_check_ms": 1788968744793
+      "last_trailing_check_ms": 1788969046865
     },
     "ETHINR": {
       "active_block_open_time": 1788955200000,
@@ -14,7 +14,7 @@
       "entered_this_block": true,
       "primary_touched": false,
       "no_trade_alerted": false,
-      "last_trailing_check_ms": 1788968744793
+      "last_trailing_check_ms": 1788969046865
     }
   },
   "positions": [
@@ -242,5 +242,11 @@
   "daily_stats": {
     "day_start_ms": null,
     "no_trade_count": 0
+  },
+  "bot_control": {
+    "master_enabled": true,
+    "mode": "AUTO",
+    "paused_symbols": [],
+    "last_update_id": 226894788
   }
 }
