@@ -6,7 +6,7 @@
       "entered_this_block": false,
       "primary_touched": false,
       "no_trade_alerted": false,
-      "last_trailing_check_ms": 1789051541606
+      "last_trailing_check_ms": 1789051846099
     },
     "ETHINR": {
       "active_block_open_time": 1789041600000,
@@ -14,7 +14,7 @@
       "entered_this_block": true,
       "primary_touched": false,
       "no_trade_alerted": false,
-      "last_trailing_check_ms": 1789051541606
+      "last_trailing_check_ms": 1789051846099
     }
   },
   "positions": [
