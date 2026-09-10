@@ -6,7 +6,7 @@
       "entered_this_block": true,
       "primary_touched": false,
       "no_trade_alerted": false,
-      "last_trailing_check_ms": 1789061132100
+      "last_trailing_check_ms": 1789061461285
     },
     "ETHINR": {
       "active_block_open_time": 1789056000000,
@@ -14,7 +14,7 @@
       "entered_this_block": false,
       "primary_touched": false,
       "no_trade_alerted": false,
-      "last_trailing_check_ms": 1789061132100
+      "last_trailing_check_ms": 1789061461285
     }
   },
   "positions": [
@@ -248,13 +248,13 @@
       "size": 0.373343,
       "risk_distance": 2678.5,
       "current_sl": 235343.0,
-      "status": "OPEN",
+      "status": "CLOSED",
       "partial_exit_done": true,
       "max_r_locked": 2,
       "remaining_fraction": 0.5,
-      "realized_pnl_points": 499.99961275,
+      "realized_pnl_points": 999.9992255,
       "opened_at": 1788969679.4117656,
-      "closed_at": null,
+      "closed_at": 1789061461.9371676,
       "leverage": 30,
       "sl_percent": 1.125318511142901
     },
