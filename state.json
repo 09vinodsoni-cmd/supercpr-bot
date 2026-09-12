@@ -1,20 +1,20 @@
 {
   "symbol_state": {
     "ETHUSDT": {
-      "active_block_open_time": 1789200000000,
+      "active_block_open_time": 1789214400000,
       "active_signal": "BUY",
       "entered_this_block": true,
       "primary_touched": false,
       "no_trade_alerted": false,
-      "last_trailing_check_ms": 1789214129978
+      "last_trailing_check_ms": 1789214482963
     },
     "ETHINR": {
-      "active_block_open_time": 1789200000000,
+      "active_block_open_time": 1789214400000,
       "active_signal": "BUY",
       "entered_this_block": false,
       "primary_touched": false,
       "no_trade_alerted": false,
-      "last_trailing_check_ms": 1789214129978
+      "last_trailing_check_ms": 1789214482963
     }
   },
   "positions": [
@@ -577,6 +577,26 @@
       "closed_at": null,
       "leverage": 14.365810235940113,
       "sl_percent": 0.40349403884175955
+    },
+    {
+      "id": "38977d0c",
+      "symbol": "ETHUSDT",
+      "side": "BUY",
+      "entry_type": "PRIMARY",
+      "entry_price": 2533.266666666667,
+      "initial_sl": 2523.996666666667,
+      "size": 1.078749,
+      "risk_distance": 9.269999999999982,
+      "current_sl": 2523.996666666667,
+      "status": "OPEN",
+      "partial_exit_done": false,
+      "max_r_locked": 0,
+      "remaining_fraction": 1.0,
+      "realized_pnl_points": 0.0,
+      "opened_at": 1789214480.7882357,
+      "closed_at": null,
+      "leverage": 14.365810235940113,
+      "sl_percent": 0.3659306823863779
     }
   ],
   "daily_stats": {
