@@ -6,7 +6,7 @@
       "entered_this_block": true,
       "primary_touched": false,
       "no_trade_alerted": false,
-      "last_trailing_check_ms": 1789287929745
+      "last_trailing_check_ms": 1789288255904
     },
     "ETHINR": {
       "active_block_open_time": 1789286400000,
@@ -14,7 +14,7 @@
       "entered_this_block": true,
       "primary_touched": false,
       "no_trade_alerted": false,
-      "last_trailing_check_ms": 1789287929745
+      "last_trailing_check_ms": 1789288255904
     }
   },
   "positions": [
@@ -627,12 +627,12 @@
       "initial_sl": 242184.3333333333,
       "size": 0.792707,
       "risk_distance": 1261.5,
-      "current_sl": 242184.3333333333,
+      "current_sl": 240922.8333333333,
       "status": "OPEN",
-      "partial_exit_done": false,
-      "max_r_locked": 0,
-      "remaining_fraction": 1.0,
-      "realized_pnl_points": 0.0,
+      "partial_exit_done": true,
+      "max_r_locked": 1,
+      "remaining_fraction": 0.5,
+      "realized_pnl_points": 499.99994025,
       "opened_at": 1789243279.3432786,
       "closed_at": null,
       "leverage": 30,
@@ -667,10 +667,10 @@
       "initial_sl": 241613.3333333333,
       "size": 1.601281,
       "risk_distance": 624.5,
-      "current_sl": 240988.8333333333,
+      "current_sl": 240364.3333333333,
       "status": "OPEN",
       "partial_exit_done": true,
-      "max_r_locked": 1,
+      "max_r_locked": 2,
       "remaining_fraction": 0.5,
       "realized_pnl_points": 499.99999225,
       "opened_at": 1789272072.2535443,
@@ -688,13 +688,13 @@
       "size": 1.04712,
       "risk_distance": 9.550000000000182,
       "current_sl": 2506.873333333333,
-      "status": "OPEN",
+      "status": "CLOSED",
       "partial_exit_done": false,
       "max_r_locked": 0,
       "remaining_fraction": 1.0,
-      "realized_pnl_points": 0.0,
+      "realized_pnl_points": -9.999996000000191,
       "opened_at": 1789286471.2283642,
-      "closed_at": null,
+      "closed_at": 1789288257.7127476,
       "leverage": 14.365810235940113,
       "sl_percent": 0.3795068927194358
     },
