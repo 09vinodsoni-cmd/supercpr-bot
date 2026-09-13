@@ -8,6 +8,17 @@ Edit the values below to match your setup. No code-logic changes needed here.
 # ---------------------------------------------------------------------------
 BASE_URL = "https://api.sharkexchange.in"
 
+import os  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# LIVE trading (real orders, real money) -- OFF by default.
+# Set to "LIVE" only when ready; keep "PAPER" for continued simulation.
+# ---------------------------------------------------------------------------
+TRADING_MODE = os.environ.get("TRADING_MODE", "PAPER")  # "PAPER" or "LIVE"
+
+SHARK_API_KEY = os.environ.get("SHARK_API_KEY", "")
+SHARK_API_SECRET = os.environ.get("SHARK_API_SECRET", "")
+
 # Klines are a PUBLIC endpoint (no api-key/signature needed for paper trading).
 # We only need candle data, since this is a PAPER bot -- no real orders are sent.
 KLINES_ENDPOINT = "/v1/market/klines"
@@ -101,8 +112,6 @@ TRADE_LOG_FILE = "trade_log.csv"
 # Telegram alerts (fires on: new signal, entry filled, partial exit /
 # breakeven, trailing SL move, final exit)
 # ---------------------------------------------------------------------------
-import os  # noqa: E402
-
 TELEGRAM_ENABLED = True
 # Read from environment first (this is how GitHub Actions passes in your
 # repo Secrets). Falls back to the hardcoded value only for local runs where
