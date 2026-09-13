@@ -28,6 +28,7 @@ import shark_api
 import state_store
 import telegram_alert
 from paper_broker import PaperBroker
+from live_broker import LiveBroker
 
 
 def log_trade_csv(broker: PaperBroker):
@@ -121,10 +122,11 @@ class SymbolEngine:
     """Tracks CPR block state + entry window for ONE symbol."""
 
     def __init__(self, symbol: str, take_side: str, broker: PaperBroker,
-                 daily_stats: dict, bot_control: dict):
+                 daily_stats: dict, bot_control: dict, live_broker: LiveBroker = None):
         self.symbol = symbol
         self.take_side = take_side  # "BUY" or "SELL" -- only this side is ever traded
         self.broker = broker
+        self.live_broker = live_broker  # only used when config.TRADING_MODE == "LIVE"
         self.daily_stats = daily_stats  # shared dict across engines, for NO_TRADE counting
         self.bot_control = bot_control  # shared dict: ON/OFF, MANUAL/AUTO, paused symbols
 
@@ -233,6 +235,10 @@ class SymbolEngine:
         if self.symbol in self.bot_control.get("paused_symbols", []):
             return  # this symbol paused via Telegram -- no new entries on it
 
+        if config.TRADING_MODE == "LIVE":
+            self._handle_live_entry()
+            return
+
         now_ms = int(time.time() * 1000)
         window_end_ms = self.active_block_open_time + config.ENTRY_WINDOW_CANDLES * 3600 * 1000
         effective_end_ms = min(now_ms, window_end_ms)
@@ -288,8 +294,37 @@ class SymbolEngine:
                 f"{config.ENTRY_WINDOW_CANDLES}h) closed without a fill."
             )
 
+    def _handle_live_entry(self):
+        """LIVE mode: both Primary and Secondary entries are placed
+        IMMEDIATELY when the block opens (as real resting orders) -- no
+        waiting/polling for a touch ourselves, since the exchange's own
+        order book does that. One attempt per block."""
+        if self.bot_control.get("mode") != "AUTO":
+            telegram_alert.send(
+                f"ℹ️ {self.symbol} {self.take_side} signal active (MANUAL mode) -- "
+                f"would place LIVE dual-entry orders now, but not executing "
+                f"(send AUTO to enable)."
+            )
+            self.entered_this_block = True
+            return
 
-def _handle_emergency_stop(broker: PaperBroker):
+        current_price = shark_api.get_last_price(self.symbol)
+        if current_price is None:
+            print(f"[{self.symbol}] could not fetch current price for live entry -- will retry next poll")
+            return  # do NOT mark entered_this_block -- we haven't acted yet
+
+        sl_buffer = config.SL_BUFFER_POINTS_BY_SYMBOL[self.symbol]
+        self.live_broker.check_and_place_dual_entries(
+            self.symbol, self.take_side, self.current_cpr, sl_buffer,
+            current_price, self.active_block_open_time,
+        )
+        self.entered_this_block = True
+
+
+def _handle_emergency_stop(broker: PaperBroker, live_broker: LiveBroker):
+    if config.TRADING_MODE == "LIVE":
+        live_broker.emergency_stop_all()
+        return
     open_positions = [p for p in broker.positions if p.status == "OPEN"]
     if not open_positions:
         telegram_alert.send("🛑 EMERGENCY STOP -- no open positions to close.")
@@ -313,7 +348,10 @@ def _handle_emergency_stop(broker: PaperBroker):
     )
 
 
-def _handle_close_position(broker: PaperBroker, pos_id: str):
+def _handle_close_position(broker: PaperBroker, pos_id: str, live_broker: LiveBroker):
+    if config.TRADING_MODE == "LIVE":
+        live_broker.close_one(pos_id)
+        return
     pos = next((p for p in broker.positions if p.id == pos_id and p.status == "OPEN"), None)
     if not pos:
         telegram_alert.send(f"⚠️ No OPEN position found with id={pos_id}.")
@@ -349,7 +387,7 @@ def _handle_setsl(broker: PaperBroker, text: str):
     telegram_alert.send(f"🎯 SL for {pos_id} manually overridden: {old_sl:.2f} → {new_sl:.2f}")
 
 
-def _handle_command_text(text: str, broker: PaperBroker, bot_control: dict):
+def _handle_command_text(text: str, broker: PaperBroker, bot_control: dict, live_broker: LiveBroker):
     upper = text.strip().upper()
 
     if upper == "ON":
@@ -360,14 +398,20 @@ def _handle_command_text(text: str, broker: PaperBroker, bot_control: dict):
         telegram_alert.send("🛑 Bot turned OFF. No NEW trades will be taken (existing positions still managed/trailed).")
     elif upper == "MANUAL":
         bot_control["mode"] = "MANUAL"
-        telegram_alert.send("✋ Mode set to MANUAL. (Paper mode: no execution difference yet -- this will matter once live trading is enabled.)")
+        if config.TRADING_MODE == "LIVE":
+            telegram_alert.send("✋ Mode set to MANUAL. No REAL orders will be placed for new signals -- you'll get an alert instead. Existing open positions are still safely managed/trailed.")
+        else:
+            telegram_alert.send("✋ Mode set to MANUAL. (Paper mode: no execution difference.)")
     elif upper == "AUTO":
         bot_control["mode"] = "AUTO"
-        telegram_alert.send("🔄 Mode set to AUTO.")
+        telegram_alert.send("🔄 Mode set to AUTO." + (" Real orders will be placed automatically." if config.TRADING_MODE == "LIVE" else ""))
     elif upper == "EMERGENCY STOP":
-        _handle_emergency_stop(broker)
+        _handle_emergency_stop(broker, live_broker)
     elif upper == "SNAPSHOT":
-        send_live_snapshot(broker, "on-demand")
+        if config.TRADING_MODE == "LIVE":
+            telegram_alert.send(live_broker.summary())
+        else:
+            send_live_snapshot(broker, "on-demand")
     elif upper.startswith("PAUSE "):
         sym = upper.replace("PAUSE ", "").strip()
         if sym in config.SYMBOL_ENGINES:
@@ -388,13 +432,16 @@ def _handle_command_text(text: str, broker: PaperBroker, bot_control: dict):
             telegram_alert.send(f"⚠️ Unknown symbol '{sym}'.")
     elif upper.startswith("CLOSE "):
         pos_id = text.strip().split(" ", 1)[1].strip()
-        _handle_close_position(broker, pos_id)
+        _handle_close_position(broker, pos_id, live_broker)
     elif text.strip().startswith("/setsl"):
-        _handle_setsl(broker, text.strip())
+        if config.TRADING_MODE == "LIVE":
+            telegram_alert.send("⚠️ /setsl isn't available in LIVE mode yet -- use your exchange's app to adjust an SL order directly if needed.")
+        else:
+            _handle_setsl(broker, text.strip())
     # else: unrecognized text -- ignore silently (could be a stray chat message)
 
 
-def process_telegram_commands(broker: PaperBroker, bot_control: dict):
+def process_telegram_commands(broker: PaperBroker, bot_control: dict, live_broker: LiveBroker):
     last_id = bot_control.get("last_update_id")
     offset = (last_id + 1) if last_id is not None else None
     updates = telegram_alert.get_updates(offset=offset)
@@ -407,7 +454,7 @@ def process_telegram_commands(broker: PaperBroker, bot_control: dict):
         if not text:
             continue
         try:
-            _handle_command_text(text, broker, bot_control)
+            _handle_command_text(text, broker, bot_control, live_broker)
         except Exception as e:
             print(f"[telegram] command handling error for '{text}': {e}")
             traceback.print_exc()
@@ -423,36 +470,53 @@ def load_engines_and_broker():
         "paused_symbols": [], "last_update_id": None,
     }
 
+    live_broker = LiveBroker()
+    live_broker.trades = state_store.restore_live_trades(saved.get("live_trades", []))
+
     engines = {}
     for symbol, cfg in config.SYMBOL_ENGINES.items():
-        eng = SymbolEngine(symbol, cfg["take_side"], broker, daily_stats, bot_control)
+        eng = SymbolEngine(symbol, cfg["take_side"], broker, daily_stats, bot_control, live_broker)
         if symbol in saved.get("symbol_state", {}):
             eng.restore(saved["symbol_state"][symbol])
         engines[symbol] = eng
-    return engines, broker, daily_stats, bot_control
+    return engines, broker, daily_stats, bot_control, live_broker
 
 
-def run_one_cycle(engines: dict, broker: PaperBroker, daily_stats: dict, bot_control: dict):
+def run_one_cycle(engines: dict, broker: PaperBroker, daily_stats: dict,
+                   bot_control: dict, live_broker: LiveBroker):
     """One full poll cycle: process Telegram commands, check for new blocks,
     check entry windows, update trailing SL on open positions, persist
     state, log trades."""
-    process_telegram_commands(broker, bot_control)
+    process_telegram_commands(broker, bot_control, live_broker)
 
-    # Refresh the INR/USDT conversion rate BEFORE polling, since an entry
-    # opened during eng.poll() needs it for margin-in-INR calculation.
-    usdt_price = shark_api.get_last_price("ETHUSDT")
-    inr_price = shark_api.get_last_price("ETHINR")
-    if usdt_price and inr_price:
-        broker.set_rate(inr_price / usdt_price)
-    broker.recompute_margins_from_positions()
+    if config.TRADING_MODE == "LIVE":
+        window_ms = config.ENTRY_WINDOW_CANDLES * 3600 * 1000
+        try:
+            live_broker.cancel_expired_pending(window_ms)
+            live_broker.poll_pending_entries()
+        except Exception as e:
+            print(f"[bot] live_broker pending-entry poll error: {e}")
+            telegram_alert.send(f"⚠️ Live pending-entry poll error: {e}")
+    else:
+        # Refresh the INR/USDT conversion rate BEFORE polling, since an entry
+        # opened during eng.poll() needs it for margin-in-INR calculation.
+        usdt_price = shark_api.get_last_price("ETHUSDT")
+        inr_price = shark_api.get_last_price("ETHINR")
+        if usdt_price and inr_price:
+            broker.set_rate(inr_price / usdt_price)
+        broker.recompute_margins_from_positions()
+        broker.recompute_capital_from_realized()
 
     for eng in engines.values():
         eng.poll()
 
     # All symbols share the same 4h block boundaries, so if ANY engine just
-    # opened a new block, they all did this cycle -- fire the snapshot once.
+    # opened a new block, they all did this cycle.
     new_block_engines = [eng for eng in engines.values() if eng.just_opened_new_block]
-    if new_block_engines:
+    if new_block_engines and config.TRADING_MODE != "LIVE":
+        # The elaborate snapshot/daily-summary format is paper-Position
+        # shaped; LIVE mode gets its own (simpler) status via SNAPSHOT
+        # command and the per-trade alerts already sent throughout.
         block_open_ms = new_block_engines[0].active_block_open_time
         block_label = datetime.fromtimestamp(block_open_ms / 1000, tz=timezone.utc).strftime("%H:%M UTC")
         send_live_snapshot(broker, block_label)
@@ -481,26 +545,35 @@ def run_one_cycle(engines: dict, broker: PaperBroker, daily_stats: dict, bot_con
             price_ranges[symbol] = (high, low, last_close)
         eng.last_trailing_check_ms = now_ms
 
-    broker.update_all(price_ranges)
+    if config.TRADING_MODE == "LIVE":
+        try:
+            live_broker.update_open_trades(price_ranges)
+            live_broker.poll_trade_closures()
+        except Exception as e:
+            print(f"[bot] live_broker trailing/closure poll error: {e}")
+            telegram_alert.send(f"⚠️ Live trailing/closure poll error: {e}")
+    else:
+        broker.update_all(price_ranges)
 
     symbol_state = {sym: eng.to_dict() for sym, eng in engines.items()}
-    state_store.save(symbol_state, broker.positions, daily_stats, bot_control)
+    state_store.save(symbol_state, broker.positions, daily_stats, bot_control, live_broker.trades)
     log_trade_csv(broker)
 
-    print(f"[{datetime.now().isoformat()}] {broker.summary()}")
+    summary_line = live_broker.summary() if config.TRADING_MODE == "LIVE" else broker.summary()
+    print(f"[{datetime.now().isoformat()}] {summary_line}")
 
 
 def main():
     run_once = "--once" in sys.argv  # used by the GitHub Actions workflow
 
-    engines, broker, daily_stats, bot_control = load_engines_and_broker()
+    engines, broker, daily_stats, bot_control, live_broker = load_engines_and_broker()
 
     if run_once:
         # Single cycle then exit -- GitHub Actions runs this on a cron
         # schedule, checking out fresh state.json each time and committing
         # the updated one back at the end of the workflow.
         try:
-            run_one_cycle(engines, broker, daily_stats, bot_control)
+            run_one_cycle(engines, broker, daily_stats, bot_control, live_broker)
         except Exception as e:
             print(f"[bot] single-cycle error: {e}")
             traceback.print_exc()
@@ -509,11 +582,11 @@ def main():
 
     # Continuous mode -- for running on your own laptop/VPS.
     telegram_alert.send(
-        f"🚀 Super CPR paper bot started. Symbols: {list(config.SYMBOL_ENGINES.keys())}"
+        f"🚀 Super CPR bot started [{config.TRADING_MODE}]. Symbols: {list(config.SYMBOL_ENGINES.keys())}"
     )
     while True:
         try:
-            run_one_cycle(engines, broker, daily_stats, bot_control)
+            run_one_cycle(engines, broker, daily_stats, bot_control, live_broker)
         except Exception as e:
             print(f"[bot] main loop error: {e}")
             traceback.print_exc()
