@@ -1,20 +1,20 @@
 {
   "symbol_state": {
     "ETHUSDT": {
-      "active_block_open_time": 1789272000000,
-      "active_signal": "SELL",
-      "entered_this_block": false,
+      "active_block_open_time": 1789286400000,
+      "active_signal": "BUY",
+      "entered_this_block": true,
       "primary_touched": false,
       "no_trade_alerted": false,
-      "last_trailing_check_ms": 1789286139313
+      "last_trailing_check_ms": 1789286474869
     },
     "ETHINR": {
-      "active_block_open_time": 1789272000000,
+      "active_block_open_time": 1789286400000,
       "active_signal": "SELL",
       "entered_this_block": true,
       "primary_touched": false,
       "no_trade_alerted": false,
-      "last_trailing_check_ms": 1789286139313
+      "last_trailing_check_ms": 1789286474869
     }
   },
   "positions": [
@@ -677,6 +677,46 @@
       "closed_at": null,
       "leverage": 30,
       "sl_percent": 0.25914063791337494
+    },
+    {
+      "id": "1fe3d047",
+      "symbol": "ETHUSDT",
+      "side": "BUY",
+      "entry_type": "PRIMARY",
+      "entry_price": 2516.423333333333,
+      "initial_sl": 2506.873333333333,
+      "size": 1.04712,
+      "risk_distance": 9.550000000000182,
+      "current_sl": 2506.873333333333,
+      "status": "OPEN",
+      "partial_exit_done": false,
+      "max_r_locked": 0,
+      "remaining_fraction": 1.0,
+      "realized_pnl_points": 0.0,
+      "opened_at": 1789286471.2283642,
+      "closed_at": null,
+      "leverage": 14.365810235940113,
+      "sl_percent": 0.3795068927194358
+    },
+    {
+      "id": "667b8085",
+      "symbol": "ETHINR",
+      "side": "SELL",
+      "entry_type": "PRIMARY",
+      "entry_price": 240514.0,
+      "initial_sl": 241508.3333333333,
+      "size": 1.005699,
+      "risk_distance": 994.3333333333139,
+      "current_sl": 241508.3333333333,
+      "status": "OPEN",
+      "partial_exit_done": false,
+      "max_r_locked": 0,
+      "remaining_fraction": 1.0,
+      "realized_pnl_points": 0.0,
+      "opened_at": 1789286473.4163172,
+      "closed_at": null,
+      "leverage": 30,
+      "sl_percent": 0.4134201474065185
     }
   ],
   "daily_stats": {
