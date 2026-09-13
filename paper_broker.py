@@ -95,6 +95,17 @@ class PaperBroker:
             margin_native = total_value_native / leverage
             self.used_margin_inr_by_symbol[symbol] = self._to_inr(margin_native, symbol)
 
+    def recompute_capital_from_realized(self):
+        """Capital = starting capital + cumulative realized P&L across ALL
+        positions (converted to INR), so it reflects real trading results
+        -- profits raise available capital, losses reduce it -- instead of
+        staying frozen at the starting number forever."""
+        total_realized_inr = 0.0
+        for p in self.positions:
+            if p.realized_pnl_points:
+                total_realized_inr += self._to_inr(p.realized_pnl_points, p.symbol)
+        self.capital_inr = config.STARTING_CAPITAL_INR + total_realized_inr
+
     # ------------------------------------------------------------------
     # Opening
     # ------------------------------------------------------------------
