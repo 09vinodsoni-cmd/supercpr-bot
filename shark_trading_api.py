@@ -233,17 +233,13 @@ def cancel_all_orders(symbol: str = None) -> dict:
     return signed_post("/v1/order/cancel-all-orders", params)
 
 
-def get_futures_wallet() -> dict:
+def get_futures_wallet(margin_asset: str = "INR") -> dict:
     """Real account balance/margin -- source of truth for live capital
     tracking (so brokerage fees and any external credits are automatically
     reflected, since we're reading the exchange's own number, not
     re-deriving it ourselves).
 
-    ⚠️ UNCONFIRMED PATH: the docs page was cut off before showing this
-    endpoint's exact URL/params (we only saw the table-of-contents entry
-    '#futures-wallet-details'). This guess follows the sibling endpoints'
-    naming pattern. If it 404s, check docs.sharkexchange.in's own TOC
-    entry directly and update ENDPOINT below -- nothing else depends on
-    the exact path."""
-    ENDPOINT = "/v1/order/futures-wallet-details"
-    return signed_get(ENDPOINT)
+    Confirmed from docs.sharkexchange.in: GET /v1/wallet/futures-wallet/details
+    (earlier guess of /v1/order/futures-wallet-details was wrong -- fixed
+    after seeing the real 404 from a live call)."""
+    return signed_get("/v1/wallet/futures-wallet/details", {"marginAsset": margin_asset})
