@@ -230,6 +230,8 @@ class LiveBroker:
         try:
             wallet = api.get_futures_wallet()
             available = wallet.get("withdrawableBalance", wallet.get("availableBalance"))
+            if available is None:
+                print(f"[live_broker] wallet response missing expected balance field, raw: {wallet}")
         except Exception as e:
             telegram_alert.send(f"WARNING: Could not fetch wallet balance, skipping entry as a precaution: {e}")
             return
