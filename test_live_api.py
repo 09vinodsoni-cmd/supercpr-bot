@@ -72,13 +72,14 @@ except Exception as e:
 
 print()
 print("=" * 60)
-print("TEST 4: Place+cancel a tiny FAR-FROM-MARKET order (skips leverage-setting this run)")
-print("(price is set 50% below market so it CANNOT fill even briefly)")
+print("TEST 4: Place+cancel a tiny NEAR-MARKET test order (skips leverage-setting this run)")
+print("(price is set 5% below market -- close enough to be accepted, far")
+print(" enough that it won't fill in the couple of seconds this test runs)")
 print("=" * 60)
 try:
     current_price = candles.get_last_price("ETHUSDT")
     print(f"Current ETHUSDT price: {current_price}")
-    test_price = round(current_price * 0.5, 2)
+    test_price = round(current_price * 0.95, 2)
     print(f"Placing tiny test LIMIT BUY: 0.01 ETH @ {test_price} (far below market)...")
     resp = api.place_entry_order("ETHUSDT", "BUY", "LIMIT", 0.01, price=test_price)
     print("Placed. Response:")
