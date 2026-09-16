@@ -50,16 +50,32 @@ except Exception as e:
 
 print()
 print("=" * 60)
-print("TEST 4: Set leverage, then place+cancel a tiny FAR-FROM-MARKET order")
+print("TEST 4a: Set leverage with marginMode=CROSS (diagnostic)")
+print("=" * 60)
+try:
+    lev_resp = api.set_leverage_and_margin_mode("ETHUSDT", 5, "CROSS")
+    print("SUCCESS. Response:")
+    print(lev_resp)
+except Exception as e:
+    print(f"FAILED: {e}")
+
+print()
+print("=" * 60)
+print("TEST 4b: Set leverage with marginMode=ISOLATED (diagnostic)")
+print("=" * 60)
+try:
+    lev_resp = api.set_leverage_and_margin_mode("ETHUSDT", 5, "ISOLATED")
+    print("SUCCESS. Response:")
+    print(lev_resp)
+except Exception as e:
+    print(f"FAILED: {e}")
+
+print()
+print("=" * 60)
+print("TEST 4: Place+cancel a tiny FAR-FROM-MARKET order (skips leverage-setting this run)")
 print("(price is set 50% below market so it CANNOT fill even briefly)")
 print("=" * 60)
 try:
-    print("Setting ETHUSDT leverage to 5x ISOLATED (safe default for this test)...")
-    lev_resp = api.set_leverage_and_margin_mode("ETHUSDT", 5, "ISOLATED")
-    print("Leverage set. Response:")
-    print(lev_resp)
-
-    current_price = candles.get_last_price("ETHUSDT")
     print(f"Current ETHUSDT price: {current_price}")
     test_price = round(current_price * 0.5, 2)
     print(f"Placing tiny test LIMIT BUY: 0.01 ETH @ {test_price} (far below market)...")
