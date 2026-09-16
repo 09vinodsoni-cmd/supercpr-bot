@@ -14,8 +14,19 @@ import time
 from typing import List, Dict, Optional
 
 import requests
+import socket
+import urllib3.util.connection as urllib3_cn
 
 import config
+
+# Force IPv4 for all outgoing requests -- see shark_trading_api.py for why
+# (VPS has both IPv4/IPv6; IPv6 isn't whitelisted on the trading API key,
+# and pinning IPv4 everywhere keeps behavior consistent across modules).
+def _allowed_gai_family():
+    return socket.AF_INET
+
+
+urllib3_cn.allowed_gai_family = _allowed_gai_family
 
 
 class Candle:
