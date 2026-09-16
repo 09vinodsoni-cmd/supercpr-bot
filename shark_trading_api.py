@@ -21,12 +21,31 @@ history), so a mismatch here should be equally fixable.
 import hashlib
 import hmac
 import json
+import socket
 import time
 import urllib.parse
 
 import requests
+import urllib3.util.connection as urllib3_cn
 
 import config
+
+
+# ---------------------------------------------------------------------------
+# Force IPv4 for all outgoing requests from this module.
+#
+# Fixes a real failure seen live: the VPS has both an IPv4 and an IPv6
+# address; requests to api.sharkexchange.in sometimes went out over IPv6,
+# which was never whitelisted on the API key (only the IPv4 address was),
+# causing "IP address not whitelisted" errors. This is the standard,
+# well-known fix for pinning the `requests`/urllib3 stack to IPv4 only,
+# regardless of what the OS's DNS/routing would otherwise prefer.
+# ---------------------------------------------------------------------------
+def _allowed_gai_family():
+    return socket.AF_INET
+
+
+urllib3_cn.allowed_gai_family = _allowed_gai_family
 
 
 class SharkAPIError(Exception):
