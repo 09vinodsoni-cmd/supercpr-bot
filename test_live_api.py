@@ -76,6 +76,7 @@ print("TEST 4: Place+cancel a tiny FAR-FROM-MARKET order (skips leverage-setting
 print("(price is set 50% below market so it CANNOT fill even briefly)")
 print("=" * 60)
 try:
+    current_price = candles.get_last_price("ETHUSDT")
     print(f"Current ETHUSDT price: {current_price}")
     test_price = round(current_price * 0.5, 2)
     print(f"Placing tiny test LIMIT BUY: 0.01 ETH @ {test_price} (far below market)...")
