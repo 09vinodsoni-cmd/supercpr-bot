@@ -80,8 +80,8 @@ try:
     current_price = candles.get_last_price("ETHUSDT")
     print(f"Current ETHUSDT price: {current_price}")
     test_price = round(current_price * 0.95, 2)
-    print(f"Placing tiny test LIMIT BUY: 0.01 ETH @ {test_price} (far below market)...")
-    resp = api.place_entry_order("ETHUSDT", "BUY", "LIMIT", 0.01, price=test_price)
+    print(f"Placing tiny test LIMIT BUY: 0.1 ETH @ {test_price} (far below market)...")
+    resp = api.place_entry_order("ETHUSDT", "BUY", "LIMIT", 0.1, price=test_price)
     print("Placed. Response:")
     print(resp)
 
