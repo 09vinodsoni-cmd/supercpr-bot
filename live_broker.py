@@ -255,8 +255,16 @@ class LiveBroker:
         try:
             wallet = api.get_futures_wallet()
             available = wallet.get("withdrawableBalance", wallet.get("availableBalance"))
+            if available is not None:
+                # Shark's wallet API returns this field as a string (e.g. "1234.56"),
+                # not a number -- cast it so the comparison below works correctly.
+                try:
+                    available = float(available)
+                except (TypeError, ValueError):
+                    print(f"[live_broker] could not parse balance value as float: {available!r}")
+                    available = None
             if available is None:
-                print(f"[live_broker] wallet response missing expected balance field, raw: {wallet}")
+                print(f"[live_broker] wallet response missing/unparseable balance field, raw: {wallet}")
         except Exception as e:
             telegram_alert.send(f"WARNING: Could not fetch wallet balance, skipping entry as a precaution: {e}")
             return
