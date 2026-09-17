@@ -78,7 +78,8 @@ class LivePosition:
         return 1 if self.side == "BUY" else -1
 
     def price_at_r(self, r: float) -> float:
-        return self.entry_price + self.sign * r * self.risk_distance
+        raw = self.entry_price + self.sign * r * self.risk_distance
+        return round(raw, config.PRICE_PRECISION_BY_SYMBOL.get(self.symbol, 2))
 
     def current_r(self, price: float) -> float:
         return self.sign * (price - self.entry_price) / self.risk_distance
@@ -132,6 +133,13 @@ class LiveBroker:
 
     def _build_trade(self, symbol, side, entry_type, entry_price, initial_sl, max_risk,
                       leverage, block_open_time_ms) -> LivePosition:
+        # Shark rejects order prices with more decimals than its tick size
+        # allows ("Price precision should be less than 3") -- CPR-level math
+        # can produce longer floats, so round here BEFORE anything (size,
+        # risk_distance, alerts) is derived from these two values.
+        precision = config.PRICE_PRECISION_BY_SYMBOL.get(symbol, 2)
+        entry_price = round(entry_price, precision)
+        initial_sl = round(initial_sl, precision)
         risk_distance = abs(entry_price - initial_sl)
         size = round(max_risk / risk_distance, 6)
         return LivePosition(
@@ -369,7 +377,7 @@ class LiveBroker:
         if trade.partial_exit_done:
             r_level = math.floor(trade.current_r(favorable))
             if r_level >= 2 and r_level > trade.max_r_locked:
-                new_sl = trade.price_at_r(r_level - 1)
+                new_sl = trade.price_at_r(r_level - 1)  # already rounded by price_at_r
                 if trade.sl_client_order_id:
                     api.edit_order(trade.sl_client_order_id, price=new_sl)
                     trade.current_sl = new_sl
