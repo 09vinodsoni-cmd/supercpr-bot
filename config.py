@@ -40,7 +40,7 @@ KLINES_ENDPOINT = "/v1/market/klines"
 # ---------------------------------------------------------------------------
 SYMBOL_ENGINES = {
     "ETHUSDT": {"take_side": "BUY"},
-    "ETHINR":  {"take_side": "SELL"},
+    "ETHINR": {"take_side": "SELL"},
 }
 
 # ---------------------------------------------------------------------------
@@ -75,9 +75,10 @@ MAX_RISK_POINTS_BY_SYMBOL = {
     "ETHUSDT": 10,
     "ETHINR": 1000,
 }
+
 SL_BUFFER_POINTS_BY_SYMBOL = {
     "ETHUSDT": 2,
-    "ETHINR": 200,   # same ~100x scaling as the risk buffer above
+    "ETHINR": 200,  # same ~100x scaling as the risk buffer above
 }
 
 # ---------------------------------------------------------------------------
@@ -92,6 +93,30 @@ STARTING_CAPITAL_INR = 70000
 LEVERAGE_SAFETY_CUSHION = 1.5
 MAX_LEVERAGE_CAP = 30
 
+# ---------------------------------------------------------------------------
+# TEMPORARY WORKAROUND: Shark Exchange's leverage/margin-mode-setting API
+# currently rejects every request ("Cross margin is not enabled" for both
+# CROSS and ISOLATED regardless of parameters). A support ticket is open;
+# until Shark fixes it, live_broker.py cannot set leverage dynamically per
+# trade via the API, so it falls back to a fixed leverage that was set
+# ONCE manually through the Shark app's UI for ETHUSDT.
+#
+#   LEVERAGE_API_BLOCKED = True  -> use FIXED_LEVERAGE_WHILE_BLOCKED instead
+#                                   of computing leverage dynamically.
+#   FIXED_LEVERAGE_WHILE_BLOCKED  -> must match whatever leverage is actually
+#                                    set on Shark's app right now (25x).
+#
+# live_broker.py also checks that each trade's SL% stays within what this
+# fixed leverage can safely support (via LEVERAGE_SAFETY_CUSHION above) and
+# skips the trade instead of risking liquidation before our own SL if a
+# block's SL is ever unusually wide.
+#
+# IMPORTANT: once Shark support resolves the API issue, set
+# LEVERAGE_API_BLOCKED back to False to resume dynamic per-trade leverage.
+# ---------------------------------------------------------------------------
+LEVERAGE_API_BLOCKED = True
+FIXED_LEVERAGE_WHILE_BLOCKED = 25
+
 # What currency each symbol's price/margin is denominated in. ETHUSDT margin
 # is in USDT and gets converted to INR (using the live ETHINR/ETHUSDT ratio)
 # so it can be checked against one unified INR capital pool alongside ETHINR.
@@ -103,8 +128,7 @@ QUOTE_CURRENCY_BY_SYMBOL = {
 # ---------------------------------------------------------------------------
 # Bot behaviour
 # ---------------------------------------------------------------------------
-POLL_INTERVAL_SECONDS = 5 * 60   # check every 5 minutes (paper trading)
-
+POLL_INTERVAL_SECONDS = 5 * 60  # check every 5 minutes (paper trading)
 STATE_FILE = "state.json"
 TRADE_LOG_FILE = "trade_log.csv"
 
@@ -113,6 +137,7 @@ TRADE_LOG_FILE = "trade_log.csv"
 # breakeven, trailing SL move, final exit)
 # ---------------------------------------------------------------------------
 TELEGRAM_ENABLED = True
+
 # Read from environment first (this is how GitHub Actions passes in your
 # repo Secrets). Falls back to the hardcoded value only for local runs where
 # you haven't set the env var -- for GitHub Actions, set these as repo
@@ -125,7 +150,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 # IMPORTANT NOTE ON THE KLINES API
 # ---------------------------------------------------------------------------
 # Shark Exchange's public docs (docs.sharkexchange.in) confirm:
-#   POST /v1/market/klines   <- public, no auth required
+#   POST /v1/market/klines  <- public, no auth required
 #   Optional param added 22-01-2026: priceType = MARK_PRICE | LAST_PRICE
 #
 # The exact request/response schema (param names for symbol/interval/limit,
