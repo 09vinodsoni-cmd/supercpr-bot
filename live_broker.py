@@ -91,11 +91,15 @@ class LiveBroker:
     def place_dual_entries(self, symbol: str, side: str, cpr, sl_buffer: float,
                             current_price: float, safe_leverage: float,
                             block_open_time_ms: int):
-        try:
-            api.set_leverage_and_margin_mode(symbol, safe_leverage, "ISOLATED")
-        except Exception as e:
-            telegram_alert.send(f"WARNING: Failed to set leverage for {symbol}: {e}")
-            return
+        if config.LEVERAGE_API_BLOCKED:
+            print(f"[live_broker] Skipping update/preference call (blocked) -- "
+                  f"relying on manually-set {config.FIXED_LEVERAGE_WHILE_BLOCKED}x for {symbol}.")
+        else:
+            try:
+                api.set_leverage_and_margin_mode(symbol, safe_leverage, "ISOLATED")
+            except Exception as e:
+                telegram_alert.send(f"WARNING: Failed to set leverage for {symbol}: {e}")
+                return
 
         if side == "BUY":
             primary_entry, primary_sl = cpr.upper_cpr, cpr.s1 - sl_buffer
@@ -205,10 +209,31 @@ class LiveBroker:
 
         primary_sl_pct = (primary_sl_dist / entry_ref_price) * 100
         secondary_sl_pct = (secondary_sl_dist / entry_ref_price) * 100
-        safe_leverage = min(
-            self._leverage_for_sl_percent(primary_sl_pct),
-            self._leverage_for_sl_percent(secondary_sl_pct),
-        )
+
+        if config.LEVERAGE_API_BLOCKED:
+            # Workaround: use the fixed leverage manually set in the Shark
+            # app (see config.py comment) instead of computing dynamically,
+            # since the update/preference API currently rejects all requests.
+            #
+            # Safety check: this fixed leverage is only safe if SL% stays
+            # within the cushion's bounds. If a block's SL is ever wider
+            # than that (unusual volatility spike), skip rather than risk
+            # liquidation happening before our own SL would.
+            max_safe_sl_pct = 100 / (config.FIXED_LEVERAGE_WHILE_BLOCKED * config.LEVERAGE_SAFETY_CUSHION)
+            if primary_sl_pct > max_safe_sl_pct or secondary_sl_pct > max_safe_sl_pct:
+                telegram_alert.send(
+                    f"TRADE SKIPPED (SL too wide for fixed {config.FIXED_LEVERAGE_WHILE_BLOCKED}x leverage) "
+                    f"{symbol} {side}\n"
+                    f"Primary SL%={primary_sl_pct:.2f}, Secondary SL%={secondary_sl_pct:.2f}, "
+                    f"max safe={max_safe_sl_pct:.2f}%. Waiting for next block."
+                )
+                return
+            safe_leverage = config.FIXED_LEVERAGE_WHILE_BLOCKED
+        else:
+            safe_leverage = min(
+                self._leverage_for_sl_percent(primary_sl_pct),
+                self._leverage_for_sl_percent(secondary_sl_pct),
+            )
 
         max_risk = config.MAX_RISK_POINTS_BY_SYMBOL[symbol]
         approx_size = max_risk / min(primary_sl_dist, secondary_sl_dist)
