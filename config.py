@@ -125,6 +125,16 @@ QUOTE_CURRENCY_BY_SYMBOL = {
     "ETHINR": "INR",
 }
 
+# Shark Exchange rejects order prices with too many decimal places
+# ("Price precision should be less than 3", i.e. max 2 decimals). CPR-level
+# math can produce longer floats, so every price sent to the order API is
+# rounded to this many decimals first. Adjust per-symbol if Shark's actual
+# tick size ever turns out to need fewer/more decimals for a given symbol.
+PRICE_PRECISION_BY_SYMBOL = {
+    "ETHUSDT": 2,
+    "ETHINR": 2,
+}
+
 # ---------------------------------------------------------------------------
 # Bot behaviour
 # ---------------------------------------------------------------------------
