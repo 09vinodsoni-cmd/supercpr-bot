@@ -193,6 +193,15 @@ class SymbolEngine:
         just_completed = blocks[-2]
 
         if self.active_block_open_time == forming.open_time:
+            if self.current_cpr is None:
+                # After a mid-block restart, restore() only restores flags,
+                # not the CPR object itself (see restore()'s comment) -- so
+                # recompute it silently here (no new alert, no flag resets)
+                # so downstream live-entry logic never sees cpr=None.
+                self.current_cpr = cpr_engine.compute_cpr(
+                    just_completed.open_time, just_completed.high,
+                    just_completed.low, just_completed.close,
+                )
             return  # nothing new
 
         # New block started.
