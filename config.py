@@ -135,6 +135,15 @@ PRICE_PRECISION_BY_SYMBOL = {
     "ETHINR": 2,
 }
 
+# Shark also caps order QUANTITY decimals separately from price
+# ("Quantity precision should be less than 4", i.e. max 3 decimals).
+# Position size is computed as max_risk / risk_distance, which can produce
+# longer floats -- rounded to this many decimals before being sent.
+QUANTITY_PRECISION_BY_SYMBOL = {
+    "ETHUSDT": 3,
+    "ETHINR": 3,
+}
+
 # ---------------------------------------------------------------------------
 # Bot behaviour
 # ---------------------------------------------------------------------------
