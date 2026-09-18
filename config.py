@@ -138,7 +138,7 @@ PRICE_PRECISION_BY_SYMBOL = {
 # ---------------------------------------------------------------------------
 # Bot behaviour
 # ---------------------------------------------------------------------------
-POLL_INTERVAL_SECONDS = 5 * 60  # check every 5 minutes (paper trading)
+POLL_INTERVAL_SECONDS = 60  # check every 1 minute (VPS live trading -- was 5 min for GitHub Actions paper mode)
 STATE_FILE = "state.json"
 TRADE_LOG_FILE = "trade_log.csv"
 
