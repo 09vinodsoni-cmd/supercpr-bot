@@ -141,7 +141,7 @@ class LiveBroker:
         entry_price = round(entry_price, precision)
         initial_sl = round(initial_sl, precision)
         risk_distance = abs(entry_price - initial_sl)
-        size = round(max_risk / risk_distance, 6)
+        size = round(max_risk / risk_distance, config.QUANTITY_PRECISION_BY_SYMBOL.get(symbol, 3))
         return LivePosition(
             id=str(uuid.uuid4())[:8], symbol=symbol, side=side, entry_type=entry_type,
             entry_price=entry_price, initial_sl=initial_sl, size=size,
@@ -434,7 +434,8 @@ class LiveBroker:
         breakeven = trade.entry_price
         if trade.sl_client_order_id:
             try:
-                api.edit_order(trade.sl_client_order_id, quantity=round(trade.size * 0.5, 6), price=breakeven)
+                half_qty = round(trade.size * 0.5, config.QUANTITY_PRECISION_BY_SYMBOL.get(trade.symbol, 3))
+                api.edit_order(trade.sl_client_order_id, quantity=half_qty, price=breakeven)
                 trade.current_sl = breakeven
             except Exception as e:
                 telegram_alert.send(f"WARNING: Failed to move SL to breakeven for {trade.id}: {e}")
