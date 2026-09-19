@@ -1,4 +1,3 @@
-cat > /root/supercpr-bot/live_broker.py << 'LBEOF'
 """
 LIVE trading broker. Places REAL orders on Shark Exchange and manages them
 through their full lifecycle. This mirrors paper_broker.py's per-position
@@ -49,6 +48,21 @@ def round_price(symbol: str, price: float):
     precision = config.PRICE_PRECISION_BY_SYMBOL.get(symbol, 2)
     rounded = round(price, precision)
     return int(rounded) if precision == 0 else rounded
+
+
+def api_price(symbol: str, price):
+    """Format an already-rounded price for the order-placement API call.
+    Untested hypothesis: Shark's server may re-canonicalize a bare JSON
+    integer (e.g. 250860, no decimal point) before checking the signature,
+    producing different bytes than what we originally signed -- causing
+    "Signature mismatched" (seen only on ETHINR's STOP_MARKET entries,
+    which are the only orders using an integer price so far). Sending it
+    as a JSON string instead avoids any such server-side renumbering.
+    Only affects precision-0 symbols (ETHINR); ETHUSDT's proven float path
+    is untouched. Revert to returning `price` unchanged if this doesn't
+    fix the signature errors -- the real cause is still unconfirmed."""
+    precision = config.PRICE_PRECISION_BY_SYMBOL.get(symbol, 2)
+    return str(price) if precision == 0 else price
 
 
 @dataclass
@@ -171,12 +185,14 @@ class LiveBroker:
             if needs_stop:
                 resp = api.place_entry_order(
                     trade.symbol, trade.side, "STOP_MARKET", trade.size,
-                    stop_price=trade.entry_price, stop_loss_price=trade.initial_sl,
+                    stop_price=api_price(trade.symbol, trade.entry_price),
+                    stop_loss_price=api_price(trade.symbol, trade.initial_sl),
                 )
             else:
                 resp = api.place_entry_order(
                     trade.symbol, trade.side, "LIMIT", trade.size,
-                    price=trade.entry_price, stop_loss_price=trade.initial_sl,
+                    price=api_price(trade.symbol, trade.entry_price),
+                    stop_loss_price=api_price(trade.symbol, trade.initial_sl),
                 )
         except Exception as e:
             telegram_alert.send(f"WARNING: Failed to place {trade.entry_type} {trade.side} {trade.symbol}: {e}")
@@ -390,7 +406,7 @@ class LiveBroker:
             if r_level >= 2 and r_level > trade.max_r_locked:
                 new_sl = trade.price_at_r(r_level - 1)  # already rounded by price_at_r
                 if trade.sl_client_order_id:
-                    api.edit_order(trade.sl_client_order_id, price=new_sl)
+                    api.edit_order(trade.sl_client_order_id, price=api_price(trade.symbol, new_sl))
                     trade.current_sl = new_sl
                     trade.max_r_locked = r_level
                     telegram_alert.send(
@@ -401,9 +417,10 @@ class LiveBroker:
     def _place_partial_tp(self, trade: LivePosition):
         tp_side = "SELL" if trade.side == "BUY" else "BUY"
         tp_price = trade.price_at_r(1)
-        tp_qty = round(trade.size * 0.5, 6)
+        tp_qty = round(trade.size * 0.5, config.QUANTITY_PRECISION_BY_SYMBOL.get(trade.symbol, 3))
         try:
-            resp = api.place_reduce_only_order(trade.symbol, tp_side, trade.position_id, tp_qty, tp_price)
+            resp = api.place_reduce_only_order(trade.symbol, tp_side, trade.position_id, tp_qty,
+                                                api_price(trade.symbol, tp_price))
             trade.tp_client_order_id = resp.get("clientOrderId")
             telegram_alert.send(
                 f"1R reached {trade.symbol} {trade.side} id={trade.id} -- "
@@ -446,7 +463,7 @@ class LiveBroker:
         if trade.sl_client_order_id:
             try:
                 half_qty = round(trade.size * 0.5, config.QUANTITY_PRECISION_BY_SYMBOL.get(trade.symbol, 3))
-                api.edit_order(trade.sl_client_order_id, quantity=half_qty, price=breakeven)
+                api.edit_order(trade.sl_client_order_id, quantity=half_qty, price=api_price(trade.symbol, breakeven))
                 trade.current_sl = breakeven
             except Exception as e:
                 telegram_alert.send(f"WARNING: Failed to move SL to breakeven for {trade.id}: {e}")
@@ -502,4 +519,3 @@ class LiveBroker:
         closed = [t for t in self.trades if t.status == "CLOSED"]
         return (f"LIVE -- Pending: {len(pending)} | Open: {len(open_trades)} | "
                 f"Closed: {len(closed)}")
-LBEOF
