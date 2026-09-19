@@ -1,3 +1,4 @@
+cat > /root/supercpr-bot/live_broker.py << 'LBEOF'
 """
 LIVE trading broker. Places REAL orders on Shark Exchange and manages them
 through their full lifecycle. This mirrors paper_broker.py's per-position
@@ -37,6 +38,17 @@ from typing import Optional
 import config
 import shark_trading_api as api
 import telegram_alert
+
+
+def round_price(symbol: str, price: float):
+    """Round a price to the symbol's allowed precision before sending to
+    Shark. When precision is 0 (e.g. ETHINR needs whole-rupee prices),
+    returns a plain int -- a float like 249606.0 still serializes with a
+    decimal point in JSON, which Shark's "precision should be less than 1"
+    check can reject just like a real fractional price."""
+    precision = config.PRICE_PRECISION_BY_SYMBOL.get(symbol, 2)
+    rounded = round(price, precision)
+    return int(rounded) if precision == 0 else rounded
 
 
 @dataclass
@@ -79,7 +91,7 @@ class LivePosition:
 
     def price_at_r(self, r: float) -> float:
         raw = self.entry_price + self.sign * r * self.risk_distance
-        return round(raw, config.PRICE_PRECISION_BY_SYMBOL.get(self.symbol, 2))
+        return round_price(self.symbol, raw)
 
     def current_r(self, price: float) -> float:
         return self.sign * (price - self.entry_price) / self.risk_distance
@@ -134,12 +146,11 @@ class LiveBroker:
     def _build_trade(self, symbol, side, entry_type, entry_price, initial_sl, max_risk,
                       leverage, block_open_time_ms) -> LivePosition:
         # Shark rejects order prices with more decimals than its tick size
-        # allows ("Price precision should be less than 3") -- CPR-level math
-        # can produce longer floats, so round here BEFORE anything (size,
-        # risk_distance, alerts) is derived from these two values.
-        precision = config.PRICE_PRECISION_BY_SYMBOL.get(symbol, 2)
-        entry_price = round(entry_price, precision)
-        initial_sl = round(initial_sl, precision)
+        # allows (e.g. "Price precision should be less than 3") -- CPR-level
+        # math can produce longer floats, so round here BEFORE anything
+        # (size, risk_distance, alerts) is derived from these two values.
+        entry_price = round_price(symbol, entry_price)
+        initial_sl = round_price(symbol, initial_sl)
         risk_distance = abs(entry_price - initial_sl)
         size = round(max_risk / risk_distance, config.QUANTITY_PRECISION_BY_SYMBOL.get(symbol, 3))
         return LivePosition(
@@ -417,4 +428,78 @@ class LiveBroker:
             still_has_open_position = len(open_positions) > 0
 
             for trade in [t for t in open_trades if t.symbol == symbol]:
-                if (trade.tp
+                if (trade.tp_client_order_id and not trade.partial_exit_done
+                        and trade.tp_client_order_id not in open_order_ids):
+                    self._on_partial_tp_filled(trade)
+
+                if trade.partial_exit_done and not still_has_open_position:
+                    self._on_final_close(trade)
+                elif not trade.partial_exit_done and trade.sl_client_order_id and \
+                        trade.sl_client_order_id not in open_order_ids and not still_has_open_position:
+                    self._on_final_close(trade)
+
+    def _on_partial_tp_filled(self, trade: LivePosition):
+        trade.partial_exit_done = True
+        trade.remaining_fraction = 0.5
+        trade.max_r_locked = 1
+        breakeven = trade.entry_price
+        if trade.sl_client_order_id:
+            try:
+                half_qty = round(trade.size * 0.5, config.QUANTITY_PRECISION_BY_SYMBOL.get(trade.symbol, 3))
+                api.edit_order(trade.sl_client_order_id, quantity=half_qty, price=breakeven)
+                trade.current_sl = breakeven
+            except Exception as e:
+                telegram_alert.send(f"WARNING: Failed to move SL to breakeven for {trade.id}: {e}")
+        realized = 0.5 * trade.size * trade.risk_distance * 1
+        trade.realized_pnl_points += realized
+        telegram_alert.send(
+            f"1R CONFIRMED FILLED {trade.symbol} {trade.side} id={trade.id}\n"
+            f"SL moved to breakeven ({breakeven:.2f})"
+        )
+
+    def _on_final_close(self, trade: LivePosition):
+        trade.status = "CLOSED"
+        trade.closed_at = time.time()
+        telegram_alert.send(
+            f"CLOSED (live) {trade.symbol} {trade.side} id={trade.id}\n"
+            f"Final SL/exit -- check exchange trade history for exact fill price."
+        )
+
+    def emergency_stop_all(self):
+        try:
+            api.cancel_all_orders()
+            api.close_all_positions()
+            for t in self.trades:
+                if t.status == "PENDING":
+                    t.status = "CANCELLED"
+                elif t.status == "OPEN":
+                    t.status = "CLOSED"
+                    t.closed_at = time.time()
+            telegram_alert.send("EMERGENCY STOP (live) -- all orders cancelled, all positions closed.")
+        except Exception as e:
+            telegram_alert.send(f"WARNING: EMERGENCY STOP failed partway: {e}. Check the exchange directly.")
+
+    def close_one(self, trade_id: str):
+        trade = next((t for t in self.trades if t.id == trade_id and t.status == "OPEN"), None)
+        if not trade:
+            telegram_alert.send(f"No OPEN live trade found with id={trade_id}.")
+            return
+        try:
+            if trade.sl_client_order_id:
+                api.delete_order(trade.sl_client_order_id)
+            if trade.tp_client_order_id:
+                api.delete_order(trade.tp_client_order_id)
+            api.close_all_positions(trade.symbol)
+            trade.status = "CLOSED"
+            trade.closed_at = time.time()
+            telegram_alert.send(f"Manually closed {trade.symbol} {trade.side} id={trade.id}")
+        except Exception as e:
+            telegram_alert.send(f"WARNING: Failed to close {trade_id}: {e}")
+
+    def summary(self) -> str:
+        open_trades = [t for t in self.trades if t.status == "OPEN"]
+        pending = [t for t in self.trades if t.status == "PENDING"]
+        closed = [t for t in self.trades if t.status == "CLOSED"]
+        return (f"LIVE -- Pending: {len(pending)} | Open: {len(open_trades)} | "
+                f"Closed: {len(closed)}")
+LBEOF
