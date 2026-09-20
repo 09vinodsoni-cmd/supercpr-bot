@@ -355,6 +355,15 @@ class LiveBroker:
                     f"FILLED {trade.entry_type} {trade.side} {trade.symbol} id={trade.id}\n"
                     f"positionId={trade.position_id}"
                 )
+                # Place the 50%-at-1R take-profit as a resting order on the
+                # exchange RIGHT NOW, rather than waiting for our own polling
+                # to notice price touched 1R -- a poll is up to a minute
+                # behind, and if price reverses in that gap the exchange
+                # would never have had a live order to fill, turning a
+                # would-be profit into a loss instead. Resting it immediately
+                # means the exchange's own matching engine fills it the
+                # instant 1R is touched, no matter how briefly.
+                self._place_partial_tp(trade)
                 sibling = next((t for t in pending
                                  if t.other_leg_client_order_id == trade.entry_client_order_id
                                  and t.status == "PENDING"), None)
@@ -397,10 +406,10 @@ class LiveBroker:
     def _update_one_trade(self, trade: LivePosition, high: float, low: float):
         favorable = high if trade.sign == 1 else low
 
-        if not trade.partial_exit_done and trade.current_r(favorable) >= 1:
-            self._place_partial_tp(trade)
-            return
-
+        # The 50%-at-1R take-profit is now placed as a resting order the
+        # moment the entry fills (see poll_pending_entries), not triggered
+        # here from candle high/low -- this function only handles trailing
+        # the SL further once that partial exit has actually happened.
         if trade.partial_exit_done:
             r_level = math.floor(trade.current_r(favorable))
             if r_level >= 2 and r_level > trade.max_r_locked:
@@ -475,6 +484,15 @@ class LiveBroker:
         )
 
     def _on_final_close(self, trade: LivePosition):
+        # If SL fired before the resting 1R take-profit ever filled, that TP
+        # order is now dangling (reduce-only against a position that's gone
+        # flat) -- cancel it so it can't sit around and unexpectedly interact
+        # with a future position on this symbol.
+        if not trade.partial_exit_done and trade.tp_client_order_id:
+            try:
+                api.delete_order(trade.tp_client_order_id)
+            except Exception as e:
+                print(f"[live_broker] cancel of dangling TP failed for {trade.id}: {e}")
         trade.status = "CLOSED"
         trade.closed_at = time.time()
         telegram_alert.send(
