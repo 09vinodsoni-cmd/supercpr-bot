@@ -414,7 +414,7 @@ class LiveBroker:
             if r_level >= 2 and r_level > trade.max_r_locked:
                 new_sl = trade.price_at_r(r_level - 1)  # already rounded by price_at_r
                 if trade.sl_client_order_id:
-                    api.edit_order(trade.sl_client_order_id, price=api_price(trade.symbol, new_sl))
+                    api.edit_order(trade.sl_client_order_id, stop_price=api_price(trade.symbol, new_sl))
                     trade.current_sl = new_sl
                     trade.max_r_locked = r_level
                     telegram_alert.send(
@@ -431,8 +431,8 @@ class LiveBroker:
                                                 api_price(trade.symbol, tp_price))
             trade.tp_client_order_id = resp.get("clientOrderId")
             telegram_alert.send(
-                f"1R reached {trade.symbol} {trade.side} id={trade.id} -- "
-                f"placed partial TP: {tp_qty} @ {tp_price:.2f}"
+                f"1R take-profit order placed (resting) {trade.symbol} {trade.side} id={trade.id} -- "
+                f"{tp_qty} @ {tp_price:.2f}"
             )
         except Exception as e:
             telegram_alert.send(f"WARNING: Failed to place partial TP for {trade.id}: {e}")
@@ -468,19 +468,35 @@ class LiveBroker:
         trade.remaining_fraction = 0.5
         trade.max_r_locked = 1
         breakeven = trade.entry_price
+        sl_move_succeeded = False
         if trade.sl_client_order_id:
             try:
                 half_qty = round(trade.size * 0.5, config.QUANTITY_PRECISION_BY_SYMBOL.get(trade.symbol, 3))
-                api.edit_order(trade.sl_client_order_id, quantity=half_qty, price=api_price(trade.symbol, breakeven))
+                # The SL is a STOP_MARKET order -- Shark's edit-order endpoint
+                # rejects "price" for that order type ("Price is not a valid
+                # edit parameter for stop market order"); its trigger level
+                # must be edited via "stopPrice" instead.
+                api.edit_order(trade.sl_client_order_id, quantity=half_qty,
+                                stop_price=api_price(trade.symbol, breakeven))
                 trade.current_sl = breakeven
+                sl_move_succeeded = True
             except Exception as e:
                 telegram_alert.send(f"WARNING: Failed to move SL to breakeven for {trade.id}: {e}")
         realized = 0.5 * trade.size * trade.risk_distance * 1
         trade.realized_pnl_points += realized
-        telegram_alert.send(
-            f"1R CONFIRMED FILLED {trade.symbol} {trade.side} id={trade.id}\n"
-            f"SL moved to breakeven ({breakeven:.2f})"
-        )
+        # Only claim the SL actually moved if the edit call above succeeded --
+        # previously this message fired unconditionally, even right after
+        # reporting the move had failed.
+        if sl_move_succeeded:
+            telegram_alert.send(
+                f"1R CONFIRMED FILLED {trade.symbol} {trade.side} id={trade.id}\n"
+                f"SL moved to breakeven ({breakeven:.2f})"
+            )
+        else:
+            telegram_alert.send(
+                f"1R CONFIRMED FILLED {trade.symbol} {trade.side} id={trade.id}\n"
+                f"SL still at ORIGINAL level -- breakeven move failed, see warning above."
+            )
 
     def _on_final_close(self, trade: LivePosition):
         # If SL fired before the resting 1R take-profit ever filled, that TP
