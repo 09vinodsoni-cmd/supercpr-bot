@@ -52,17 +52,16 @@ def round_price(symbol: str, price: float):
 
 def api_price(symbol: str, price):
     """Format an already-rounded price for the order-placement API call.
-    Untested hypothesis: Shark's server may re-canonicalize a bare JSON
-    integer (e.g. 250860, no decimal point) before checking the signature,
-    producing different bytes than what we originally signed -- causing
-    "Signature mismatched" (seen only on ETHINR's STOP_MARKET entries,
-    which are the only orders using an integer price so far). Sending it
-    as a JSON string instead avoids any such server-side renumbering.
-    Only affects precision-0 symbols (ETHINR); ETHUSDT's proven float path
-    is untouched. Revert to returning `price` unchanged if this doesn't
-    fix the signature errors -- the real cause is still unconfirmed."""
-    precision = config.PRICE_PRECISION_BY_SYMBOL.get(symbol, 2)
-    return str(price) if precision == 0 else price
+    Tried sending it as a JSON string for precision-0 symbols (ETHINR) to
+    test whether that fixed "Signature mismatched" on STOP_MARKET entries --
+    it didn't, AND it broke the previously-passing precision check on
+    LIMIT entries (Shark's precision validator apparently can't handle a
+    string price at all). Reverted to passing the value through unchanged;
+    round_price() already returns a plain int for precision-0 symbols,
+    which is what actually satisfied Shark's precision check before.
+    The STOP_MARKET signature-mismatch issue remains unresolved -- it is
+    NOT caused by int-vs-string price formatting."""
+    return price
 
 
 @dataclass
