@@ -132,7 +132,7 @@ QUOTE_CURRENCY_BY_SYMBOL = {
 # tick size ever turns out to need fewer/more decimals for a given symbol.
 PRICE_PRECISION_BY_SYMBOL = {
     "ETHUSDT": 2,
-    "ETHINR": 2,
+    "ETHINR": 0,
 }
 
 # Shark also caps order QUANTITY decimals separately from price
