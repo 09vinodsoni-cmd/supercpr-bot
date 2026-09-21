@@ -242,14 +242,14 @@ def close_all_positions(symbol: str = None) -> dict:
     params = {}
     if symbol:
         params["symbol"] = symbol
-    return signed_post("/v1/positions/close-all-positions", params)
+    return signed_delete("/v1/positions/close-all-positions", params)
 
 
 def cancel_all_orders(symbol: str = None) -> dict:
     params = {}
     if symbol:
         params["symbol"] = symbol
-    return signed_post("/v1/order/cancel-all-orders", params)
+    return signed_delete("/v1/order/cancel-all-orders", params)
 
 
 def get_futures_wallet(margin_asset: str = "INR") -> dict:
