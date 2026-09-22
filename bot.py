@@ -118,6 +118,44 @@ def send_daily_summary(broker: PaperBroker, daily_stats: dict, day_start_s: floa
     )
 
 
+def send_live_daily_summary(live_broker: LiveBroker, day_start_s: float, day_end_s: float):
+    """LIVE-mode equivalent of send_daily_summary() -- built from
+    live_broker.trades (real orders/fills) instead of paper Positions."""
+    day_trades = [t for t in live_broker.trades if day_start_s <= t.opened_at < day_end_s]
+    total = len(day_trades)
+    buys = [t for t in day_trades if t.side == "BUY"]
+    sells = [t for t in day_trades if t.side == "SELL"]
+    closed = [t for t in day_trades if t.status == "CLOSED"]
+    cancelled = [t for t in day_trades if t.status == "CANCELLED"]
+    still_active = [t for t in day_trades if t.status in ("PENDING", "OPEN")]
+    profitable = [t for t in closed if t.realized_pnl_points > 0]
+    losing = [t for t in closed if t.realized_pnl_points < 0]
+    breakeven = [t for t in closed if t.realized_pnl_points == 0]
+
+    net_by_symbol: dict = {}
+    trades_by_symbol: dict = {}
+    for t in day_trades:
+        net_by_symbol[t.symbol] = net_by_symbol.get(t.symbol, 0.0) + t.realized_pnl_points
+        trades_by_symbol[t.symbol] = trades_by_symbol.get(t.symbol, 0) + 1
+
+    net_lines = "\n".join(
+        f"  {sym}: {net:+.2f} pts, {trades_by_symbol[sym]} entrie(s)"
+        for sym, net in net_by_symbol.items()
+    ) or "  (no entries today)"
+
+    currently_open = [t for t in live_broker.trades if t.status == "OPEN"]
+
+    telegram_alert.send(
+        f"📊 <b>LIVE DAILY SUMMARY</b> (Yesterday 9:30 PM \u2192 Today 9:30 PM)\n"
+        f"Total entries attempted: {total} | Buy: {len(buys)} | Sell: {len(sells)}\n"
+        f"Filled & closed: {len(closed)} | Cancelled (never filled): {len(cancelled)} | "
+        f"Still pending/open: {len(still_active)}\n"
+        f"\u2705 Profitable: {len(profitable)} | \u274c Losing: {len(losing)} | \u2796 Breakeven: {len(breakeven)}\n"
+        f"Net P&L by symbol:\n{net_lines}\n"
+        f"Currently open (carried forward): {len(currently_open)}"
+    )
+
+
 class SymbolEngine:
     """Tracks CPR block state + entry window for ONE symbol."""
 
@@ -522,19 +560,24 @@ def run_one_cycle(engines: dict, broker: PaperBroker, daily_stats: dict,
     # All symbols share the same 4h block boundaries, so if ANY engine just
     # opened a new block, they all did this cycle.
     new_block_engines = [eng for eng in engines.values() if eng.just_opened_new_block]
-    if new_block_engines and config.TRADING_MODE != "LIVE":
-        # The elaborate snapshot/daily-summary format is paper-Position
-        # shaped; LIVE mode gets its own (simpler) status via SNAPSHOT
-        # command and the per-trade alerts already sent throughout.
+    if new_block_engines:
         block_open_ms = new_block_engines[0].active_block_open_time
-        block_label = datetime.fromtimestamp(block_open_ms / 1000, tz=timezone.utc).strftime("%H:%M UTC")
-        send_live_snapshot(broker, block_label)
+
+        if config.TRADING_MODE != "LIVE":
+            # The elaborate snapshot format is paper-Position shaped; LIVE
+            # mode gets its own status via the SNAPSHOT command and the
+            # per-trade alerts already sent throughout.
+            block_label = datetime.fromtimestamp(block_open_ms / 1000, tz=timezone.utc).strftime("%H:%M UTC")
+            send_live_snapshot(broker, block_label)
 
         if _is_930pm_ist_block(block_open_ms):
             day_start_ms = daily_stats.get("day_start_ms")
             day_start_s = (day_start_ms / 1000) if day_start_ms else 0.0
             day_end_s = block_open_ms / 1000
-            send_daily_summary(broker, daily_stats, day_start_s, day_end_s)
+            if config.TRADING_MODE == "LIVE":
+                send_live_daily_summary(live_broker, day_start_s, day_end_s)
+            else:
+                send_daily_summary(broker, daily_stats, day_start_s, day_end_s)
             # Reset for the new day starting now.
             daily_stats["day_start_ms"] = block_open_ms
             daily_stats["no_trade_count"] = 0

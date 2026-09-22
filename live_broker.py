@@ -453,9 +453,23 @@ class LiveBroker:
             still_has_open_position = len(open_positions) > 0
 
             for trade in [t for t in open_trades if t.symbol == symbol]:
-                if (trade.tp_client_order_id and not trade.partial_exit_done
-                        and trade.tp_client_order_id not in open_order_ids):
+                tp_gone = (trade.tp_client_order_id and not trade.partial_exit_done
+                           and trade.tp_client_order_id not in open_order_ids)
+
+                if tp_gone and still_has_open_position:
+                    # The position still exists (reduced) -- the TP genuinely
+                    # filled and took 50% off. This is the only case where
+                    # "TP order gone" safely means "TP filled".
                     self._on_partial_tp_filled(trade)
+                elif tp_gone and not still_has_open_position:
+                    # The position is fully gone already -- the SL closed the
+                    # WHOLE size before the TP ever got a chance to fill, and
+                    # the exchange auto-cancelled the now-dangling TP as a
+                    # side effect. Treat this as a full SL loss, NOT a 1R
+                    # partial fill -- crediting a partial-profit here would be
+                    # reporting a profit that never actually happened.
+                    self._on_sl_full_close(trade)
+                    continue
 
                 if trade.partial_exit_done and not still_has_open_position:
                     self._on_final_close(trade)
@@ -498,6 +512,26 @@ class LiveBroker:
                 f"SL still at ORIGINAL level -- breakeven move failed, see warning above."
             )
 
+    def _on_sl_full_close(self, trade: LivePosition):
+        """Position went from OPEN straight to fully closed, with the 1R TP
+        never having filled -- a genuine full-size SL loss. Cancel the now-
+        dangling TP (the exchange may have already auto-cancelled it, but
+        clean up defensively) and record the ACTUAL loss, instead of the old
+        behaviour of blindly crediting a +1R partial profit that never
+        happened just because the TP order disappeared from open orders."""
+        if trade.tp_client_order_id:
+            try:
+                api.delete_order(trade.tp_client_order_id)
+            except Exception as e:
+                print(f"[live_broker] cancel of dangling TP failed for {trade.id}: {e}")
+        trade.realized_pnl_points += -1 * trade.size * trade.risk_distance
+        trade.status = "CLOSED"
+        trade.closed_at = time.time()
+        telegram_alert.send(
+            f"SL HIT (full loss) {trade.symbol} {trade.side} id={trade.id}\n"
+            f"1R take-profit never filled -- closed at original SL, full size."
+        )
+
     def _on_final_close(self, trade: LivePosition):
         # If SL fired before the resting 1R take-profit ever filled, that TP
         # order is now dangling (reduce-only against a position that's gone
@@ -508,6 +542,16 @@ class LiveBroker:
                 api.delete_order(trade.tp_client_order_id)
             except Exception as e:
                 print(f"[live_broker] cancel of dangling TP failed for {trade.id}: {e}")
+        # Record the remaining leg's P&L too -- previously this was never
+        # computed at all, silently leaving realized_pnl_points at whatever
+        # the partial-fill credited (or 0), even though the position's
+        # closing price (approximated by current_sl, since Shark's exact
+        # fill price isn't fetched here) may differ from that.
+        if trade.partial_exit_done:
+            trade.realized_pnl_points += (
+                trade.remaining_fraction * trade.size * trade.sign
+                * (trade.current_sl - trade.entry_price)
+            )
         trade.status = "CLOSED"
         trade.closed_at = time.time()
         telegram_alert.send(
