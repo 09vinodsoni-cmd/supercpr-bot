@@ -390,6 +390,27 @@ class LiveBroker:
         except Exception as e:
             print(f"[live_broker] could not fetch linked SL order for {trade.id}: {e}")
 
+    def _refresh_sl_client_order_id(self, trade: LivePosition) -> bool:
+        """Re-fetch the CURRENT SL order's clientOrderId before editing it.
+        Shark replaces the SL order (new clientOrderId) whenever the
+        underlying net position's size changes -- e.g. a partial TP fill, or
+        another entry merging into the same netted position -- and the OLD
+        clientOrderId we cached right after entry becomes stale, showing up
+        only as a "linkId" reference on the new order. Editing with the
+        stale id fails with "not found" (error 3060) even though a live SL
+        order genuinely exists. Returns True if a current SL order was
+        found (trade.sl_client_order_id updated in place)."""
+        try:
+            open_orders = api.get_open_orders(trade.symbol)
+            sl_order = next((o for o in open_orders if o.get("subType") == "STOP_LOSS"), None)
+            if sl_order:
+                trade.sl_client_order_id = sl_order.get("clientOrderId")
+                return True
+            return False
+        except Exception as e:
+            print(f"[live_broker] could not refresh SL order id for {trade.id}: {e}")
+            return False
+
     def update_open_trades(self, price_ranges: dict):
         for trade in [t for t in self.trades if t.status == "OPEN"]:
             rng = price_ranges.get(trade.symbol)
@@ -414,13 +435,18 @@ class LiveBroker:
             if r_level >= 2 and r_level > trade.max_r_locked:
                 new_sl = trade.price_at_r(r_level - 1)  # already rounded by price_at_r
                 if trade.sl_client_order_id:
-                    api.edit_order(trade.sl_client_order_id, stop_price=api_price(trade.symbol, new_sl))
-                    trade.current_sl = new_sl
-                    trade.max_r_locked = r_level
-                    telegram_alert.send(
-                        f"{r_level}R HIT {trade.symbol} {trade.side} id={trade.id}\n"
-                        f"SL trailed to {new_sl:.2f}"
-                    )
+                    self._refresh_sl_client_order_id(trade)
+                if trade.sl_client_order_id:
+                    try:
+                        api.edit_order(trade.sl_client_order_id, stop_price=api_price(trade.symbol, new_sl))
+                        trade.current_sl = new_sl
+                        trade.max_r_locked = r_level
+                        telegram_alert.send(
+                            f"{r_level}R HIT {trade.symbol} {trade.side} id={trade.id}\n"
+                            f"SL trailed to {new_sl:.2f}"
+                        )
+                    except Exception as e:
+                        telegram_alert.send(f"WARNING: Failed to trail SL for {trade.id}: {e}")
 
     def _place_partial_tp(self, trade: LivePosition):
         tp_side = "SELL" if trade.side == "BUY" else "BUY"
@@ -483,6 +509,8 @@ class LiveBroker:
         trade.max_r_locked = 1
         breakeven = trade.entry_price
         sl_move_succeeded = False
+        if trade.sl_client_order_id:
+            self._refresh_sl_client_order_id(trade)
         if trade.sl_client_order_id:
             try:
                 half_qty = round(trade.size * 0.5, config.QUANTITY_PRECISION_BY_SYMBOL.get(trade.symbol, 3))
@@ -580,9 +608,15 @@ class LiveBroker:
             return
         try:
             if trade.sl_client_order_id:
-                api.delete_order(trade.sl_client_order_id)
+                try:
+                    api.delete_order(trade.sl_client_order_id)
+                except Exception as e:
+                    print(f"[live_broker] SL delete failed (possibly stale id) for {trade.id}: {e}")
             if trade.tp_client_order_id:
-                api.delete_order(trade.tp_client_order_id)
+                try:
+                    api.delete_order(trade.tp_client_order_id)
+                except Exception as e:
+                    print(f"[live_broker] TP delete failed (possibly stale id) for {trade.id}: {e}")
             api.close_all_positions(trade.symbol)
             trade.status = "CLOSED"
             trade.closed_at = time.time()
