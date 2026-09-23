@@ -604,7 +604,16 @@ class LiveBroker:
                     self._intended_sl_qty(o) for o in siblings if o.id != t.id and moved.get(o.id)
                 )
                 headroom = position_size - others_total
-                safe_qty = min(target_qty, max(headroom, 0))
+                # Round DOWN (never up) to the symbol's required precision.
+                # headroom is computed from raw API floats and can come out
+                # with extra decimal places (e.g. 0.17899999...), which
+                # Shark rejects outright ("Quantity precision should be
+                # less than 4", error 3006); flooring (rather than
+                # round-to-nearest) also guarantees we never submit a
+                # hair more than the true available headroom.
+                precision = config.QUANTITY_PRECISION_BY_SYMBOL.get(t.symbol, 3)
+                factor = 10 ** precision
+                safe_qty = math.floor(min(target_qty, max(headroom, 0)) * factor) / factor
                 if safe_qty <= 0:
                     continue
                 already_correct = abs(cur - safe_qty) < 1e-9 and abs(t.current_sl - target_price) < 1e-9
