@@ -407,12 +407,15 @@ class LiveBroker:
         IMPORTANT: when two sibling trades on the same symbol each have
         their OWN separate SL order open at once, there is more than one
         STOP_LOSS-subtype order to choose from -- picking "the first one"
-        (the previous behaviour) silently cross-wires siblings' SL orders
-        together. Disambiguate by picking whichever candidate's price is
-        closest to THIS trade's own entry_price: two sibling trades'
-        entries are normally far enough apart (many R-multiples) that this
-        reliably tells them apart even after either has been trailed
-        several R-levels.
+        (the original behaviour) silently cross-wires siblings' SL orders
+        together. Disambiguate using the order's "price" field, which
+        Shark appears to keep FIXED at the order's original placement
+        price forever (unlike "stopPrice", which changes every time the
+        SL is trailed, and can therefore coincidentally collide between
+        two siblings once either has been edited) -- match against
+        trade.initial_sl, which is exactly that original value, and is
+        unique per trade since two siblings' initial stops are normally
+        far enough apart.
 
         Returns True if a current SL order was found (trade.sl_client_order_id
         updated in place)."""
@@ -421,8 +424,7 @@ class LiveBroker:
             candidates = [o for o in open_orders if o.get("subType") == "STOP_LOSS"]
             if not candidates:
                 return False
-            best = min(candidates, key=lambda o: abs((o.get("stopPrice") or o.get("price") or 0)
-                                                       - trade.entry_price))
+            best = min(candidates, key=lambda o: abs((o.get("price") or 0) - trade.initial_sl))
             trade.sl_client_order_id = best.get("clientOrderId")
             return True
         except Exception as e:
