@@ -96,6 +96,8 @@ class LivePosition:
     realized_pnl_points: float = 0.0
     breakeven_notified: bool = False
     breakeven_warned: bool = False
+    last_r_notified: int = 0
+    last_r_warned: int = 0
 
     opened_at: float = field(default_factory=time.time)
     closed_at: Optional[float] = None
@@ -435,20 +437,14 @@ class LiveBroker:
         if trade.partial_exit_done:
             r_level = math.floor(trade.current_r(favorable))
             if r_level >= 2 and r_level > trade.max_r_locked:
-                new_sl = trade.price_at_r(r_level - 1)  # already rounded by price_at_r
-                if trade.sl_client_order_id:
-                    self._refresh_sl_client_order_id(trade)
-                if trade.sl_client_order_id:
-                    try:
-                        api.edit_order(trade.sl_client_order_id, stop_price=api_price(trade.symbol, new_sl))
-                        trade.current_sl = new_sl
-                        trade.max_r_locked = r_level
-                        telegram_alert.send(
-                            f"{r_level}R HIT {trade.symbol} {trade.side} id={trade.id}\n"
-                            f"SL trailed to {new_sl:.2f}"
-                        )
-                    except Exception as e:
-                        telegram_alert.send(f"WARNING: Failed to trail SL for {trade.id}: {e}")
+                trade.max_r_locked = r_level
+                # Route through the same reconciler used for the breakeven
+                # move -- editing just the stop_price still gets rejected
+                # with "quantity out of range" if a SIBLING trade's SL
+                # quantity on this symbol is currently stale, since Shark
+                # validates the combined SL/TP quantity budget on ANY edit
+                # to the position, not just edits that change quantity.
+                self._reconcile_sl_orders(trade.symbol)
 
     def _place_partial_tp(self, trade: LivePosition):
         tp_side = "SELL" if trade.side == "BUY" else "BUY"
@@ -597,20 +593,35 @@ class LiveBroker:
                 except Exception as e:
                     print(f"[live_broker] reconcile: edit failed for {t.id}: {e}")
 
-        # Report the breakeven-move outcome (success once ever; a failure
-        # is warned about once, but does NOT block a later success message
-        # once the shared-quantity conflict resolves on a subsequent poll).
+        # Report the outcome (success once per new R-level reached; a
+        # failure is warned about once per attempted R-level, but does NOT
+        # block a later success message once the conflict resolves).
         for t in siblings:
-            if t.partial_exit_done and t.max_r_locked == 1 and not t.breakeven_notified:
-                if moved.get(t.id):
+            if not t.partial_exit_done:
+                continue
+            if t.max_r_locked == 1:
+                if not t.breakeven_notified and moved.get(t.id):
                     t.breakeven_notified = True
                     telegram_alert.send(
                         f"SL moved to breakeven ({t.current_sl:.2f}) for {t.symbol} {t.side} id={t.id}"
                     )
-                elif not t.breakeven_warned:
+                elif not t.breakeven_warned and not moved.get(t.id):
                     t.breakeven_warned = True
                     telegram_alert.send(
                         f"WARNING: Could not fully move SL to breakeven for {t.symbol} {t.side} id={t.id} "
+                        f"this cycle (shared quantity budget with a sibling order) -- will keep retrying."
+                    )
+            elif t.max_r_locked >= 2:
+                if moved.get(t.id) and t.max_r_locked > t.last_r_notified:
+                    t.last_r_notified = t.max_r_locked
+                    telegram_alert.send(
+                        f"{t.max_r_locked}R HIT {t.symbol} {t.side} id={t.id}\n"
+                        f"SL trailed to {t.current_sl:.2f}"
+                    )
+                elif not moved.get(t.id) and t.max_r_locked > t.last_r_warned:
+                    t.last_r_warned = t.max_r_locked
+                    telegram_alert.send(
+                        f"WARNING: Failed to trail SL to {t.max_r_locked}R for {t.symbol} {t.side} id={t.id} "
                         f"this cycle (shared quantity budget with a sibling order) -- will keep retrying."
                     )
 
