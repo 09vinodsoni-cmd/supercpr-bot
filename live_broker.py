@@ -427,6 +427,21 @@ class LiveBroker:
                 print(f"[live_broker] update failed for {trade.id}: {e}")
                 telegram_alert.send(f"WARNING: Trailing-update error for {trade.symbol} id={trade.id}: {e}")
 
+        # Safety net: a trade whose SL move/trail failed this cycle already
+        # had its max_r_locked advanced (so the correct NEW target keeps
+        # getting computed), but its own r-level check above won't fire
+        # again next poll unless price reaches a further R-level. Re-run
+        # reconcile for every symbol with a partial-exit trade so a stuck
+        # edit keeps getting retried every poll until it succeeds, without
+        # needing a fresh price trigger.
+        symbols_needing_retry = {t.symbol for t in self.trades
+                                  if t.status == "OPEN" and t.partial_exit_done}
+        for symbol in symbols_needing_retry:
+            try:
+                self._reconcile_sl_orders(symbol)
+            except Exception as e:
+                print(f"[live_broker] safety-net reconcile failed for {symbol}: {e}")
+
     def _update_one_trade(self, trade: LivePosition, high: float, low: float):
         favorable = high if trade.sign == 1 else low
 
@@ -591,7 +606,23 @@ class LiveBroker:
                         t.current_sl = target_price
                         moved[t.id] = True
                 except Exception as e:
-                    print(f"[live_broker] reconcile: edit failed for {t.id}: {e}")
+                    # Error 3066 ("Another Edit request is already ongoing")
+                    # is a brief race from firing consecutive edits on the
+                    # same position within the same call -- one short retry
+                    # resolves it without waiting a full poll cycle.
+                    if "3066" in str(e):
+                        time.sleep(0.5)
+                        try:
+                            api.edit_order(t.sl_client_order_id, quantity=safe_qty,
+                                            stop_price=api_price(t.symbol, target_price))
+                            current_qty[t.id] = safe_qty
+                            if safe_qty == target_qty:
+                                t.current_sl = target_price
+                                moved[t.id] = True
+                        except Exception as e2:
+                            print(f"[live_broker] reconcile: retry after 3066 failed for {t.id}: {e2}")
+                    else:
+                        print(f"[live_broker] reconcile: edit failed for {t.id}: {e}")
 
         # Report the outcome (success once per new R-level reached; a
         # failure is warned about once per attempted R-level, but does NOT
