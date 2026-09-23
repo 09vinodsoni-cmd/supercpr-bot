@@ -402,15 +402,29 @@ class LiveBroker:
         clientOrderId we cached right after entry becomes stale, showing up
         only as a "linkId" reference on the new order. Editing with the
         stale id fails with "not found" (error 3060) even though a live SL
-        order genuinely exists. Returns True if a current SL order was
-        found (trade.sl_client_order_id updated in place)."""
+        order genuinely exists.
+
+        IMPORTANT: when two sibling trades on the same symbol each have
+        their OWN separate SL order open at once, there is more than one
+        STOP_LOSS-subtype order to choose from -- picking "the first one"
+        (the previous behaviour) silently cross-wires siblings' SL orders
+        together. Disambiguate by picking whichever candidate's price is
+        closest to THIS trade's own entry_price: two sibling trades'
+        entries are normally far enough apart (many R-multiples) that this
+        reliably tells them apart even after either has been trailed
+        several R-levels.
+
+        Returns True if a current SL order was found (trade.sl_client_order_id
+        updated in place)."""
         try:
             open_orders = api.get_open_orders(trade.symbol)
-            sl_order = next((o for o in open_orders if o.get("subType") == "STOP_LOSS"), None)
-            if sl_order:
-                trade.sl_client_order_id = sl_order.get("clientOrderId")
-                return True
-            return False
+            candidates = [o for o in open_orders if o.get("subType") == "STOP_LOSS"]
+            if not candidates:
+                return False
+            best = min(candidates, key=lambda o: abs((o.get("stopPrice") or o.get("price") or 0)
+                                                       - trade.entry_price))
+            trade.sl_client_order_id = best.get("clientOrderId")
+            return True
         except Exception as e:
             print(f"[live_broker] could not refresh SL order id for {trade.id}: {e}")
             return False
