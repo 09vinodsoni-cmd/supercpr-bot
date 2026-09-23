@@ -94,6 +94,8 @@ class LivePosition:
     current_sl: float = 0.0
     remaining_fraction: float = 1.0
     realized_pnl_points: float = 0.0
+    breakeven_notified: bool = False
+    breakeven_warned: bool = False
 
     opened_at: float = field(default_factory=time.time)
     closed_at: Optional[float] = None
@@ -503,42 +505,114 @@ class LiveBroker:
                         trade.sl_client_order_id not in open_order_ids and not still_has_open_position:
                     self._on_final_close(trade)
 
+            self._reconcile_sl_orders(symbol)
+
     def _on_partial_tp_filled(self, trade: LivePosition):
         trade.partial_exit_done = True
         trade.remaining_fraction = 0.5
         trade.max_r_locked = 1
-        breakeven = trade.entry_price
-        sl_move_succeeded = False
-        if trade.sl_client_order_id:
-            self._refresh_sl_client_order_id(trade)
-        if trade.sl_client_order_id:
-            try:
-                half_qty = round(trade.size * 0.5, config.QUANTITY_PRECISION_BY_SYMBOL.get(trade.symbol, 3))
-                # The SL is a STOP_MARKET order -- Shark's edit-order endpoint
-                # rejects "price" for that order type ("Price is not a valid
-                # edit parameter for stop market order"); its trigger level
-                # must be edited via "stopPrice" instead.
-                api.edit_order(trade.sl_client_order_id, quantity=half_qty,
-                                stop_price=api_price(trade.symbol, breakeven))
-                trade.current_sl = breakeven
-                sl_move_succeeded = True
-            except Exception as e:
-                telegram_alert.send(f"WARNING: Failed to move SL to breakeven for {trade.id}: {e}")
         realized = 0.5 * trade.size * trade.risk_distance * 1
         trade.realized_pnl_points += realized
-        # Only claim the SL actually moved if the edit call above succeeded --
-        # previously this message fired unconditionally, even right after
-        # reporting the move had failed.
-        if sl_move_succeeded:
-            telegram_alert.send(
-                f"1R CONFIRMED FILLED {trade.symbol} {trade.side} id={trade.id}\n"
-                f"SL moved to breakeven ({breakeven:.2f})"
-            )
-        else:
-            telegram_alert.send(
-                f"1R CONFIRMED FILLED {trade.symbol} {trade.side} id={trade.id}\n"
-                f"SL still at ORIGINAL level -- breakeven move failed, see warning above."
-            )
+        telegram_alert.send(
+            f"1R CONFIRMED FILLED {trade.symbol} {trade.side} id={trade.id}\n"
+            f"Moving SL to breakeven..."
+        )
+
+    def _intended_sl_price(self, trade: LivePosition) -> float:
+        if not trade.partial_exit_done:
+            return trade.initial_sl
+        if trade.max_r_locked >= 2:
+            return trade.price_at_r(trade.max_r_locked - 1)
+        return trade.entry_price
+
+    def _intended_sl_qty(self, trade: LivePosition) -> float:
+        frac = trade.remaining_fraction if trade.partial_exit_done else 1.0
+        return round(frac * trade.size, config.QUANTITY_PRECISION_BY_SYMBOL.get(trade.symbol, 3))
+
+    def _reconcile_sl_orders(self, symbol: str):
+        """Drive every open trade's SL order on this symbol to its correct
+        (quantity, price) within THIS call -- no waiting for a future poll
+        cycle. Shark enforces total(SL quantity across ALL orders on a
+        position) <= the position's actual size at every moment, so editing
+        several siblings' SL quantities in the wrong order can transiently
+        exceed that shared budget and get rejected ("quantity out of
+        range", error 3010) even though everyone's FINAL target is
+        individually valid. Fix: run up to 2 ordered passes in one call --
+        pass 1 processes the sibling holding the largest CURRENT (most
+        stale) quantity first, shrinking it only as far as necessary to
+        make room for the others; pass 2 brings everyone the rest of the
+        way to their true target now that room exists."""
+        siblings = [t for t in self.trades if t.symbol == symbol and t.status == "OPEN"
+                    and t.sl_client_order_id]
+        if not siblings:
+            return
+
+        for t in siblings:
+            self._refresh_sl_client_order_id(t)
+
+        moved = {}
+        for _pass in range(2):
+            try:
+                open_orders = api.get_open_orders(symbol)
+                positions = api.get_positions("OPEN", symbol)
+            except Exception as e:
+                print(f"[live_broker] reconcile: could not fetch state for {symbol}: {e}")
+                return
+            position_size = sum(p.get("positionAmount", 0) for p in positions)
+            current_qty = {}
+            for t in siblings:
+                o = next((o for o in open_orders if o.get("clientOrderId") == t.sl_client_order_id), None)
+                current_qty[t.id] = o.get("orderAmount") if o else None
+
+            order = sorted(siblings, key=lambda t: current_qty.get(t.id) or 0, reverse=True)
+            for t in order:
+                if moved.get(t.id):
+                    continue
+                cur = current_qty.get(t.id)
+                if cur is None:
+                    continue  # no live SL order found for this trade right now
+                target_qty = self._intended_sl_qty(t)
+                target_price = self._intended_sl_price(t)
+                others_total = sum(
+                    (current_qty.get(o.id) or 0) for o in siblings if o.id != t.id and not moved.get(o.id)
+                ) + sum(
+                    self._intended_sl_qty(o) for o in siblings if o.id != t.id and moved.get(o.id)
+                )
+                headroom = position_size - others_total
+                safe_qty = min(target_qty, max(headroom, 0))
+                if safe_qty <= 0:
+                    continue
+                already_correct = abs(cur - safe_qty) < 1e-9 and abs(t.current_sl - target_price) < 1e-9
+                if already_correct:
+                    if safe_qty == target_qty:
+                        moved[t.id] = True
+                    continue
+                try:
+                    api.edit_order(t.sl_client_order_id, quantity=safe_qty,
+                                    stop_price=api_price(t.symbol, target_price))
+                    current_qty[t.id] = safe_qty
+                    if safe_qty == target_qty:
+                        t.current_sl = target_price
+                        moved[t.id] = True
+                except Exception as e:
+                    print(f"[live_broker] reconcile: edit failed for {t.id}: {e}")
+
+        # Report the breakeven-move outcome (success once ever; a failure
+        # is warned about once, but does NOT block a later success message
+        # once the shared-quantity conflict resolves on a subsequent poll).
+        for t in siblings:
+            if t.partial_exit_done and t.max_r_locked == 1 and not t.breakeven_notified:
+                if moved.get(t.id):
+                    t.breakeven_notified = True
+                    telegram_alert.send(
+                        f"SL moved to breakeven ({t.current_sl:.2f}) for {t.symbol} {t.side} id={t.id}"
+                    )
+                elif not t.breakeven_warned:
+                    t.breakeven_warned = True
+                    telegram_alert.send(
+                        f"WARNING: Could not fully move SL to breakeven for {t.symbol} {t.side} id={t.id} "
+                        f"this cycle (shared quantity budget with a sibling order) -- will keep retrying."
+                    )
 
     def _on_sl_full_close(self, trade: LivePosition):
         """Position went from OPEN straight to fully closed, with the 1R TP
