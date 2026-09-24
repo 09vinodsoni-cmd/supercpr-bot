@@ -184,22 +184,40 @@ class LiveBroker:
         else:
             needs_stop = trade.entry_price < current_price
 
-        try:
+        def _do_place():
             if needs_stop:
-                resp = api.place_entry_order(
+                return api.place_entry_order(
                     trade.symbol, trade.side, "STOP_MARKET", trade.size,
                     stop_price=api_price(trade.symbol, trade.entry_price),
                     stop_loss_price=api_price(trade.symbol, trade.initial_sl),
                 )
             else:
-                resp = api.place_entry_order(
+                return api.place_entry_order(
                     trade.symbol, trade.side, "LIMIT", trade.size,
                     price=api_price(trade.symbol, trade.entry_price),
                     stop_loss_price=api_price(trade.symbol, trade.initial_sl),
                 )
+
+        try:
+            resp = _do_place()
         except Exception as e:
-            telegram_alert.send(f"WARNING: Failed to place {trade.entry_type} {trade.side} {trade.symbol}: {e}")
-            return None
+            # A single retry after a brief pause -- some failures here have
+            # turned out to be one-off network/timing glitches (e.g. a
+            # signature mismatch on an order type that has otherwise placed
+            # fine moments before/after) rather than a genuine, repeatable
+            # bug, so it's worth one quick second attempt before giving up
+            # and cancelling the sibling leg.
+            print(f"[live_broker] place_entry_order failed for {trade.entry_type} "
+                  f"{trade.symbol}, retrying once: {e}")
+            time.sleep(1.0)
+            try:
+                resp = _do_place()
+            except Exception as e2:
+                telegram_alert.send(
+                    f"WARNING: Failed to place {trade.entry_type} {trade.side} {trade.symbol} "
+                    f"(after 1 retry): {e2}"
+                )
+                return None
 
         trade.entry_client_order_id = resp.get("clientOrderId")
         telegram_alert.send(
