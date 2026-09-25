@@ -638,7 +638,11 @@ class LiveBroker:
             except Exception as e:
                 print(f"[live_broker] reconcile: could not fetch state for {symbol}: {e}")
                 return
-            position_size = sum(p.get("positionAmount", 0) for p in positions)
+            # "positionAmount" has been observed to under-report the true
+            # size (e.g. 0.31 when the real total was 0.347) -- "quantity"
+            # is the field that actually matches the combined footprint of
+            # every resting SL/TP order, so use that for the budget check.
+            position_size = sum(p.get("quantity", p.get("positionAmount", 0)) for p in positions)
             current_qty = {}
             for t in siblings:
                 o = next((o for o in open_orders if o.get("clientOrderId") == t.sl_client_order_id), None)
