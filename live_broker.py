@@ -443,11 +443,32 @@ class LiveBroker:
             if not candidates:
                 return False
             best = min(candidates, key=lambda o: abs((o.get("price") or 0) - trade.initial_sl))
+            # "price" is supposed to stay fixed at the order's original
+            # placement value forever, so a genuine match should be exact
+            # (or a hair off from float/rounding) -- if even the CLOSEST
+            # candidate is far from this trade's own initial_sl, none of
+            # them is actually this trade's order (e.g. only a sibling's SL
+            # remains after this trade's own SL genuinely closed), and
+            # returning that mismatched order would wrongly report this
+            # trade as still covered.
+            if abs((best.get("price") or 0) - trade.initial_sl) > 0.01:
+                return False
             trade.sl_client_order_id = best.get("clientOrderId")
             return True
         except Exception as e:
             print(f"[live_broker] could not refresh SL order id for {trade.id}: {e}")
             return False
+
+    def _trade_still_covered(self, trade: LivePosition, open_order_ids: set) -> bool:
+        """Whether THIS SPECIFIC trade's own SL order is still resting.
+        Deliberately per-trade, not "is the whole symbol position flat" --
+        once multiple sibling trades share one netted position, one
+        sibling's SL closing does NOT make the shared position flat while
+        others remain open, so checking the whole position was silently
+        leaving closed siblings marked OPEN forever."""
+        if trade.sl_client_order_id and trade.sl_client_order_id in open_order_ids:
+            return True
+        return self._refresh_sl_client_order_id(trade)
 
     def update_open_trades(self, price_ranges: dict):
         for trade in [t for t in self.trades if t.status == "OPEN"]:
@@ -518,36 +539,34 @@ class LiveBroker:
         for symbol in symbols:
             try:
                 open_orders = api.get_open_orders(symbol)
-                open_positions = api.get_positions("OPEN", symbol)
             except Exception as e:
                 print(f"[live_broker] poll_trade_closures fetch failed for {symbol}: {e}")
                 continue
             open_order_ids = {o.get("clientOrderId") for o in open_orders}
-            still_has_open_position = len(open_positions) > 0
 
             for trade in [t for t in open_trades if t.symbol == symbol]:
+                my_sl_covered = self._trade_still_covered(trade, open_order_ids)
                 tp_gone = (trade.tp_client_order_id and not trade.partial_exit_done
                            and trade.tp_client_order_id not in open_order_ids)
 
-                if tp_gone and still_has_open_position:
-                    # The position still exists (reduced) -- the TP genuinely
-                    # filled and took 50% off. This is the only case where
-                    # "TP order gone" safely means "TP filled".
+                if tp_gone and my_sl_covered:
+                    # MY OWN SL order is still resting (reduced) -- the TP
+                    # genuinely filled and took 50% off. This is the only
+                    # case where "TP order gone" safely means "TP filled".
                     self._on_partial_tp_filled(trade)
-                elif tp_gone and not still_has_open_position:
-                    # The position is fully gone already -- the SL closed the
-                    # WHOLE size before the TP ever got a chance to fill, and
-                    # the exchange auto-cancelled the now-dangling TP as a
-                    # side effect. Treat this as a full SL loss, NOT a 1R
-                    # partial fill -- crediting a partial-profit here would be
-                    # reporting a profit that never actually happened.
+                elif tp_gone and not my_sl_covered:
+                    # MY OWN SL closed the WHOLE size before the TP ever got
+                    # a chance to fill, and the exchange auto-cancelled the
+                    # now-dangling TP as a side effect. Treat this as a
+                    # full SL loss, NOT a 1R partial fill -- crediting a
+                    # partial-profit here would be reporting a profit that
+                    # never actually happened.
                     self._on_sl_full_close(trade)
                     continue
 
-                if trade.partial_exit_done and not still_has_open_position:
+                if trade.partial_exit_done and not my_sl_covered:
                     self._on_final_close(trade)
-                elif not trade.partial_exit_done and trade.sl_client_order_id and \
-                        trade.sl_client_order_id not in open_order_ids and not still_has_open_position:
+                elif not trade.partial_exit_done and trade.sl_client_order_id and not my_sl_covered:
                     self._on_final_close(trade)
 
             self._reconcile_sl_orders(symbol)
