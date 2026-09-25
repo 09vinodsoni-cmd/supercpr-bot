@@ -459,16 +459,32 @@ class LiveBroker:
             print(f"[live_broker] could not refresh SL order id for {trade.id}: {e}")
             return False
 
-    def _trade_still_covered(self, trade: LivePosition, open_order_ids: set) -> bool:
+    def _trade_still_covered(self, trade: LivePosition, open_orders: list) -> bool:
         """Whether THIS SPECIFIC trade's own SL order is still resting.
         Deliberately per-trade, not "is the whole symbol position flat" --
         once multiple sibling trades share one netted position, one
         sibling's SL closing does NOT make the shared position flat while
         others remain open, so checking the whole position was silently
-        leaving closed siblings marked OPEN forever."""
-        if trade.sl_client_order_id and trade.sl_client_order_id in open_order_ids:
+        leaving closed siblings marked OPEN forever.
+
+        IMPORTANT: even the CACHED sl_client_order_id must be verified by
+        price, not just "does an order with this id currently exist" --
+        once an id has ever been cross-wired to the wrong trade (from
+        before this matching logic existed), it can keep pointing at a
+        DIFFERENT trade's still-live order forever, since that id genuinely
+        stays present in open_order_ids even though it was never really
+        this trade's own order."""
+        candidates = [o for o in open_orders if o.get("subType") == "STOP_LOSS"]
+        cached = next((o for o in candidates if o.get("clientOrderId") == trade.sl_client_order_id), None)
+        if cached and abs((cached.get("price") or 0) - trade.initial_sl) <= 0.01:
             return True
-        return self._refresh_sl_client_order_id(trade)
+        if not candidates:
+            return False
+        best = min(candidates, key=lambda o: abs((o.get("price") or 0) - trade.initial_sl))
+        if abs((best.get("price") or 0) - trade.initial_sl) > 0.01:
+            return False
+        trade.sl_client_order_id = best.get("clientOrderId")
+        return True
 
     def update_open_trades(self, price_ranges: dict):
         for trade in [t for t in self.trades if t.status == "OPEN"]:
@@ -545,7 +561,7 @@ class LiveBroker:
             open_order_ids = {o.get("clientOrderId") for o in open_orders}
 
             for trade in [t for t in open_trades if t.symbol == symbol]:
-                my_sl_covered = self._trade_still_covered(trade, open_order_ids)
+                my_sl_covered = self._trade_still_covered(trade, open_orders)
                 tp_gone = (trade.tp_client_order_id and not trade.partial_exit_done
                            and trade.tp_client_order_id not in open_order_ids)
 
