@@ -672,7 +672,13 @@ class LiveBroker:
                 # hair more than the true available headroom.
                 precision = config.QUANTITY_PRECISION_BY_SYMBOL.get(t.symbol, 3)
                 factor = 10 ** precision
-                safe_qty = math.floor(min(target_qty, max(headroom, 0)) * factor) / factor
+                # A tiny epsilon before flooring absorbs ordinary float
+                # representation noise (e.g. 0.192 stored internally as
+                # 0.19199999999999998), which would otherwise floor down
+                # to 0.191 and leave a hair of the position permanently
+                # uncovered by any SL -- without meaningfully weakening the
+                # floor's actual job of never rounding UP past real headroom.
+                safe_qty = math.floor(min(target_qty, max(headroom, 0)) * factor + 1e-6) / factor
                 if safe_qty <= 0:
                     continue
                 already_correct = abs(cur - safe_qty) < 1e-9 and abs(t.current_sl - target_price) < 1e-9
