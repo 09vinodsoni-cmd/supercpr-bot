@@ -459,6 +459,11 @@ def _handle_command_text(text: str, broker: PaperBroker, bot_control: dict, live
             telegram_alert.send(live_broker.summary())
         else:
             send_live_snapshot(broker, "on-demand")
+    elif upper == "POSITIONS":
+        if config.TRADING_MODE == "LIVE":
+            telegram_alert.send(live_broker.detailed_positions())
+        else:
+            telegram_alert.send("POSITIONS is a LIVE-mode command (paper mode has no real positions).")
     elif upper.startswith("PAUSE "):
         sym = upper.replace("PAUSE ", "").strip()
         if sym in config.SYMBOL_ENGINES:

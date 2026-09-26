@@ -32,6 +32,7 @@ import math
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import config
@@ -834,3 +835,32 @@ class LiveBroker:
         closed = [t for t in self.trades if t.status == "CLOSED"]
         return (f"LIVE -- Pending: {len(pending)} | Open: {len(open_trades)} | "
                 f"Closed: {len(closed)}")
+
+    def detailed_positions(self) -> str:
+        """Full per-trade detail for every currently OPEN trade: which
+        block it came from (in IST, matching the block-boundary times the
+        strategy trades on -- 05:30/09:30/13:30/17:30/21:30/01:30), its id,
+        entry price, initial and current SL, how many R-levels are locked
+        in so far, and the full R1-R4 price ladder computed from its own
+        entry/risk (useful to see where the NEXT few trailing steps will
+        land, regardless of how far price has actually gone)."""
+        open_trades = [t for t in self.trades if t.status == "OPEN"]
+        if not open_trades:
+            return "No open positions right now."
+
+        blocks = []
+        for t in open_trades:
+            block_dt = (datetime.fromtimestamp(t.block_open_time_ms / 1000, tz=timezone.utc)
+                        + timedelta(hours=5, minutes=30))
+            block_label = block_dt.strftime("%d %b, %H:%M IST")
+            r_ladder = "  ".join(f"{r}R={t.price_at_r(r):.2f}" for r in (1, 2, 3, 4))
+            blocks.append(
+                f"<b>{t.symbol} {t.side}</b> [{t.entry_type}]  block: {block_label}\n"
+                f"id={t.id}\n"
+                f"Entry: {t.entry_price:.2f}  |  Initial SL: {t.initial_sl:.2f}  |  "
+                f"Current SL: {t.current_sl:.2f}\n"
+                f"R-locked so far: {t.max_r_locked}  |  Partial exit done: "
+                f"{'Yes' if t.partial_exit_done else 'No'}\n"
+                f"Ladder: {r_ladder}"
+            )
+        return "\n\n".join(blocks)
