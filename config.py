@@ -81,6 +81,14 @@ SL_BUFFER_POINTS_BY_SYMBOL = {
     "ETHINR": 200,  # same ~100x scaling as the risk buffer above
 }
 
+# How far INTO profit (past the exact entry price) the SL moves once 1R
+# is hit -- instead of sitting at exact breakeven, it locks in a small
+# real profit even if price reverses straight back through entry.
+BREAKEVEN_BUFFER_POINTS_BY_SYMBOL = {
+    "ETHUSDT": 2,
+    "ETHINR": 200,  # same ~100x scaling as the risk buffer above
+}
+
 # ---------------------------------------------------------------------------
 # Simulated capital / leverage / margin (mirrors what real live trading will
 # do -- tested here in paper mode first before any real money is involved)

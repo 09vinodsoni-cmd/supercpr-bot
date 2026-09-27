@@ -596,7 +596,7 @@ class LiveBroker:
         trade.realized_pnl_points += realized
         telegram_alert.send(
             f"1R CONFIRMED FILLED {trade.symbol} {trade.side} id={trade.id}\n"
-            f"Moving SL to breakeven..."
+            f"Moving SL to breakeven+buffer..."
         )
 
     def _intended_sl_price(self, trade: LivePosition) -> float:
@@ -604,7 +604,8 @@ class LiveBroker:
             return trade.initial_sl
         if trade.max_r_locked >= 2:
             return trade.price_at_r(trade.max_r_locked - 1)
-        return trade.entry_price
+        buffer = config.BREAKEVEN_BUFFER_POINTS_BY_SYMBOL.get(trade.symbol, 0)
+        return round_price(trade.symbol, trade.entry_price + trade.sign * buffer)
 
     def _intended_sl_qty(self, trade: LivePosition) -> float:
         frac = trade.remaining_fraction if trade.partial_exit_done else 1.0
@@ -723,12 +724,12 @@ class LiveBroker:
                 if not t.breakeven_notified and moved.get(t.id):
                     t.breakeven_notified = True
                     telegram_alert.send(
-                        f"SL moved to breakeven ({t.current_sl:.2f}) for {t.symbol} {t.side} id={t.id}"
+                        f"SL moved to breakeven+buffer ({t.current_sl:.2f}) for {t.symbol} {t.side} id={t.id}"
                     )
                 elif not t.breakeven_warned and not moved.get(t.id):
                     t.breakeven_warned = True
                     telegram_alert.send(
-                        f"WARNING: Could not fully move SL to breakeven for {t.symbol} {t.side} id={t.id} "
+                        f"WARNING: Could not fully move SL to breakeven+buffer for {t.symbol} {t.side} id={t.id} "
                         f"this cycle (shared quantity budget with a sibling order) -- will keep retrying."
                     )
             elif t.max_r_locked >= 2:
