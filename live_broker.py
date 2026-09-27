@@ -786,6 +786,8 @@ class LiveBroker:
                 trade.remaining_fraction * trade.size * trade.sign
                 * (trade.current_sl - trade.entry_price)
             )
+        else:
+            trade.realized_pnl_points += -1 * trade.size * trade.risk_distance
         trade.status = "CLOSED"
         trade.closed_at = time.time()
         telegram_alert.send(
