@@ -187,8 +187,17 @@ class LiveBroker:
 
         def _do_place():
             if needs_stop:
+                # STOP_LIMIT instead of STOP_MARKET: triggers at the same
+                # intended level, but won't fill worse than trigger +/- a
+                # small buffer (adverse direction for the fill) -- caps
+                # worst-case slippage at the cost of a small chance the
+                # order never fills at all if price gaps straight past
+                # the limit before matching.
+                buffer = config.STOP_LIMIT_BUFFER_POINTS_BY_SYMBOL.get(trade.symbol, 0)
+                limit_price = trade.entry_price + trade.sign * buffer
                 return api.place_entry_order(
-                    trade.symbol, trade.side, "STOP_MARKET", trade.size,
+                    trade.symbol, trade.side, "STOP_LIMIT", trade.size,
+                    price=api_price(trade.symbol, limit_price),
                     stop_price=api_price(trade.symbol, trade.entry_price),
                     stop_loss_price=api_price(trade.symbol, trade.initial_sl),
                 )
@@ -372,6 +381,23 @@ class LiveBroker:
 
                 trade.status = "OPEN"
                 trade.position_id = matching_pos.get("positionId")
+                # A STOP_MARKET/STOP_LIMIT entry can still fill at a price
+                # that differs slightly from the intended trigger -- Shark's
+                # own reported entryPrice for the position is the REAL
+                # fill, so sync trade.entry_price/risk_distance to it
+                # before anything downstream (the 1R take-profit price,
+                # breakeven target, R-multiple tracking) gets computed.
+                # initial_sl stays as placed; only entry/risk are corrected.
+                real_entry = matching_pos.get("entryPrice")
+                if real_entry and abs(real_entry - trade.entry_price) > 1e-6:
+                    old_entry = trade.entry_price
+                    trade.entry_price = real_entry
+                    trade.risk_distance = abs(real_entry - trade.initial_sl)
+                    telegram_alert.send(
+                        f"NOTE: {trade.entry_type} {trade.side} {trade.symbol} id={trade.id} "
+                        f"filled with slippage -- intended {old_entry:.2f}, actual {real_entry:.2f}. "
+                        f"Risk/TP recalculated from the real fill price."
+                    )
                 self._fetch_sl_client_order_id(trade)
                 telegram_alert.send(
                     f"FILLED {trade.entry_type} {trade.side} {trade.symbol} id={trade.id}\n"

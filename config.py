@@ -81,6 +81,16 @@ SL_BUFFER_POINTS_BY_SYMBOL = {
     "ETHINR": 200,  # same ~100x scaling as the risk buffer above
 }
 
+# Worst-case slippage allowed on a STOP_MARKET-style entry, implemented as
+# a STOP_LIMIT instead: trigger stays at the intended level, but the order
+# won't fill worse than trigger +/- this buffer (in the adverse-for-cost
+# direction). Caps slippage risk in exchange for a small chance the entry
+# is missed entirely if price gaps past the limit before filling.
+STOP_LIMIT_BUFFER_POINTS_BY_SYMBOL = {
+    "ETHUSDT": 3,
+    "ETHINR": 300,
+}
+
 # How far INTO profit (past the exact entry price) the SL moves once 1R
 # is hit -- instead of sitting at exact breakeven, it locks in a small
 # real profit even if price reverses straight back through entry.
