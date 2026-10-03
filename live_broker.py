@@ -381,23 +381,14 @@ class LiveBroker:
 
                 trade.status = "OPEN"
                 trade.position_id = matching_pos.get("positionId")
-                # A STOP_MARKET/STOP_LIMIT entry can still fill at a price
-                # that differs slightly from the intended trigger -- Shark's
-                # own reported entryPrice for the position is the REAL
-                # fill, so sync trade.entry_price/risk_distance to it
-                # before anything downstream (the 1R take-profit price,
-                # breakeven target, R-multiple tracking) gets computed.
-                # initial_sl stays as placed; only entry/risk are corrected.
-                real_entry = matching_pos.get("entryPrice")
-                if real_entry and abs(real_entry - trade.entry_price) > 1e-6:
-                    old_entry = trade.entry_price
-                    trade.entry_price = real_entry
-                    trade.risk_distance = abs(real_entry - trade.initial_sl)
-                    telegram_alert.send(
-                        f"NOTE: {trade.entry_type} {trade.side} {trade.symbol} id={trade.id} "
-                        f"filled with slippage -- intended {old_entry:.2f}, actual {real_entry:.2f}. "
-                        f"Risk/TP recalculated from the real fill price."
-                    )
+                # entry_price/risk_distance are NOT synced to Shark's
+                # reported entryPrice here -- that field is a blended
+                # average once a sibling trade shares the same netted
+                # position, not this trade's own fill, and corrupted a
+                # real trade's R-multiple tracking before this was removed.
+                # Worst-case slippage is instead bounded up front by using
+                # STOP_LIMIT (see _place_one_leg) rather than corrected
+                # after the fact.
                 self._fetch_sl_client_order_id(trade)
                 telegram_alert.send(
                     f"FILLED {trade.entry_type} {trade.side} {trade.symbol} id={trade.id}\n"
