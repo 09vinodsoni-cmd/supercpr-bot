@@ -118,6 +118,10 @@ class LivePosition:
 class LiveBroker:
     def __init__(self):
         self.trades: list[LivePosition] = []
+        # Remembers the params of the most recent dual-entry attempt per
+        # symbol (successful or not) so a manual REATTEMPT command can
+        # retry with the exact same CPR levels/side -- see reattempt().
+        self.last_attempt_params: dict = {}
 
     def place_dual_entries(self, symbol: str, side: str, cpr, sl_buffer: float,
                             current_price: float, safe_leverage: float,
@@ -264,6 +268,14 @@ class LiveBroker:
         brokerage fees / referral credits / anything else are automatically
         reflected -- we never re-derive capital ourselves in live mode),
         and only places the dual entries if margin is available."""
+        # Remember these params ((regardless of outcome below) so a manual
+        # REATTEMPT command can retry this exact same block/side/CPR later
+        # with a fresh price -- see reattempt().
+        self.last_attempt_params[symbol] = {
+            "side": side, "cpr": cpr, "sl_buffer": sl_buffer,
+            "block_open_time_ms": block_open_time_ms,
+        }
+
         if side == "BUY":
             primary_sl_dist = abs(cpr.upper_cpr - (cpr.s1 - sl_buffer))
             secondary_sl_dist = abs(cpr.r1 - (cpr.lower_cpr - sl_buffer))
@@ -343,6 +355,53 @@ class LiveBroker:
             return
 
         self.place_dual_entries(symbol, side, cpr, sl_buffer, current_price, safe_leverage, block_open_time_ms)
+
+    def reattempt(self, symbol: str):
+        """Manually re-try the dual-entry placement for a symbol after an
+        earlier attempt this block failed (e.g. insufficient margin that
+        has since been topped up). Reuses the exact same CPR levels/side
+        from that attempt and a FRESH current price, then goes through the
+        normal check_and_place_dual_entries path -- so a successful fill
+        creates LivePosition objects exactly like any other entry, and
+        every downstream mechanism (closure-detection, SL reconcile,
+        trailing, breakeven, Daily Summary) treats it identically, with no
+        new code path to manage it afterwards."""
+        params = self.last_attempt_params.get(symbol)
+        if not params:
+            telegram_alert.send(f"⚠️ No recent entry attempt found for {symbol} to reattempt.")
+            return
+
+        window_ms = config.ENTRY_WINDOW_CANDLES * 3600 * 1000
+        now_ms = int(time.time() * 1000)
+        if now_ms >= params["block_open_time_ms"] + window_ms:
+            telegram_alert.send(
+                f"⚠️ Entry window for {symbol}'s last attempted block has already "
+                f"closed -- cannot reattempt (wait for the next block)."
+            )
+            return
+
+        if any(t.symbol == symbol and t.status in ("OPEN", "PENDING")
+               and t.block_open_time_ms == params["block_open_time_ms"] for t in self.trades):
+            telegram_alert.send(
+                f"⚠️ {symbol} already has an active entry for this block -- not reattempting."
+            )
+            return
+
+        try:
+            import shark_api  # local import, same as the rate-fetch above -- avoids a top-level circular concern
+            current_price = shark_api.get_last_price(symbol)
+        except Exception as e:
+            telegram_alert.send(f"⚠️ Could not fetch current price for {symbol} reattempt: {e}")
+            return
+        if current_price is None:
+            telegram_alert.send(f"⚠️ Could not fetch current price for {symbol} reattempt.")
+            return
+
+        telegram_alert.send(f"🔁 Reattempting {symbol} {params['side']} dual-entry placement...")
+        self.check_and_place_dual_entries(
+            symbol, params["side"], params["cpr"], params["sl_buffer"],
+            current_price, params["block_open_time_ms"],
+        )
 
     @staticmethod
     def _leverage_for_sl_percent(sl_percent: float) -> float:
