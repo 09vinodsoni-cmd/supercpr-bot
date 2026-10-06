@@ -99,6 +99,12 @@ BREAKEVEN_BUFFER_POINTS_BY_SYMBOL = {
     "ETHINR": 200,  # same ~100x scaling as the risk buffer above
 }
 
+# Fraction of the position closed at 1R; the rest rides the trailing SL.
+# Backtested: lowering this from 0.5 to 0.25 kept max drawdown unchanged
+# while significantly increasing total profit (bigger winners get to keep
+# more size on), since win-rate itself doesn't depend on this fraction.
+PARTIAL_EXIT_FRACTION = 0.25
+
 # ---------------------------------------------------------------------------
 # Simulated capital / leverage / margin (mirrors what real live trading will
 # do -- tested here in paper mode first before any real money is involved)

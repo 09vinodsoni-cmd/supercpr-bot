@@ -612,7 +612,8 @@ class LiveBroker:
     def _place_partial_tp(self, trade: LivePosition):
         tp_side = "SELL" if trade.side == "BUY" else "BUY"
         tp_price = trade.price_at_r(1)
-        tp_qty = round(trade.size * 0.5, config.QUANTITY_PRECISION_BY_SYMBOL.get(trade.symbol, 3))
+        tp_qty = round(trade.size * config.PARTIAL_EXIT_FRACTION,
+                       config.QUANTITY_PRECISION_BY_SYMBOL.get(trade.symbol, 3))
         try:
             resp = api.place_reduce_only_order(trade.symbol, tp_side, trade.position_id, tp_qty,
                                                 api_price(trade.symbol, tp_price))
@@ -666,9 +667,9 @@ class LiveBroker:
 
     def _on_partial_tp_filled(self, trade: LivePosition):
         trade.partial_exit_done = True
-        trade.remaining_fraction = 0.5
+        trade.remaining_fraction = 1.0 - config.PARTIAL_EXIT_FRACTION
         trade.max_r_locked = 1
-        realized = 0.5 * trade.size * trade.risk_distance * 1
+        realized = config.PARTIAL_EXIT_FRACTION * trade.size * trade.risk_distance * 1
         trade.realized_pnl_points += realized
         telegram_alert.send(
             f"1R CONFIRMED FILLED {trade.symbol} {trade.side} id={trade.id}\n"
