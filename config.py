@@ -72,13 +72,13 @@ ENTRY_WINDOW_CANDLES = 2
 # Max risk points differ per symbol because ETHINR points are ~100x the size
 # of ETHUSDT points (INR vs USD quoting) for the same real-world risk.
 MAX_RISK_POINTS_BY_SYMBOL = {
-    "ETHUSDT": 10,
-    "ETHINR": 1000,
+    "ETHUSDT": 9,
+    "ETHINR": 900,
 }
 
 SL_BUFFER_POINTS_BY_SYMBOL = {
-    "ETHUSDT": 2,
-    "ETHINR": 200,  # same ~100x scaling as the risk buffer above
+    "ETHUSDT": 0.2,
+    "ETHINR": 20,  # same ~100x scaling as the risk buffer above
 }
 
 # Worst-case slippage allowed on a STOP_MARKET-style entry, implemented as
